@@ -4,13 +4,13 @@
 
 ## Goal
 
-Build a repeatable way to define, configure, evaluate, publish and operate custom agents in Microsoft Foundry. Start with a platform/SRE agent because its diagnoses and proposed fixes can be reviewed against engineering experience. Reuse the same creation workflow for later agents without copying an SRE-specific deployment.
+Build a repeatable way to define, configure, evaluate, publish and operate custom agents. Start with a platform/SRE agent because its diagnoses and proposed fixes can be reviewed against engineering experience. Reuse the same creation workflow for later agents without copying an SRE-specific deployment. Use Microsoft Foundry for model access and evaluation while keeping the first agent runtime portable between container hosts.
 
 The first agent should investigate application and infrastructure incidents, identify the owning source repository, and prepare an evidence-backed draft pull request when a durable source fix is justified. An incident may instead end with an inconclusive finding, an external-provider escalation or a separately governed mitigation. The agent must not invent a fix merely to produce a PR.
 
 ## Current platform and limits
 
-- `foundry-management-portfolio` was rebuilt on 7 November through the GitOps bootstrap root. Azure reported the account, model deployment and private endpoint succeeded; public network access and local key authentication were disabled. No model inference or Foundry agent-hosting test has been completed. The Foundry foundation is partially up; AKS and its GitOps packages remain down after teardown. See the workspace's `PLATFORM_LIFECYCLE.md` for current lifecycle evidence.
+- `foundry-management-portfolio` was rebuilt on 7 November through the GitOps bootstrap root. Subsequent approved changes enabled selected-IP public access with default deny while retaining the private endpoint and disabled local key authentication. An authenticated model-list request succeeded; no SRE-agent inference test has been completed. AKS and its GitOps packages remain down after teardown. See the workspace's `PLATFORM_LIFECYCLE.md` for current lifecycle evidence.
 - The bootstrap declares a `management` Foundry project and `chat` deployment of `gpt-4.1-mini`. Its suitability for SRE diagnosis or code repair is unmeasured. Model selection should use task-specific evaluations, not a default assumption.
 - When AKS is running, GitOps installs Argo Events, the LGTM observability stack (Loki logs, Grafana, Tempo traces and Mimir metrics), OpenTelemetry, Langfuse, Holmes, Testkube, SonarQube, Argo CD, Kargo, Backstage and Azure Service Operator. Installation does not prove that an agent can authenticate, reach these services or make a correct diagnosis.
 - Holmes is configured as a private, read-only Kubernetes and telemetry investigator using Foundry inference. Its live model call and value as a tool for another agent remain unproven. It is a candidate capability to evaluate, not a dependency to assume.
@@ -21,7 +21,7 @@ The first agent should investigate application and infrastructure incidents, ide
 ```text
 Incident or approved issue
     -> authenticated event intake and deduplication
-    -> versioned Foundry agent
+    -> versioned agent container on AKS
     -> narrowly scoped diagnostic tools
          -> AKS, GitOps and observability evidence
     -> hypothesis testing and ownership decision
@@ -31,17 +31,21 @@ Incident or approved issue
     -> existing merge and delivery controls
 ```
 
-**Foundry is the agent control plane:** agent definitions and versions, model access, tool configuration, traces and evaluations should be managed there. **The harness** is the surrounding engineering system that makes an agent dependable: event handling, tool contracts and permissions, working state, coding isolation, retries, budgets, validation and review. Foundry hosting does not remove the need to design these contracts. Foundry supports prompt and hosted agents, custom tools and MCP connections, tracing and evaluation; the choice between prompt and hosted agents needs a capability test on this account. [Foundry Agent Service](https://learn.microsoft.com/en-us/azure/foundry/agents/overview)
+**Hosting direction, 7 November 2026:** deploy the first agent container on the existing AKS cluster when it is running. Keep its image, configuration contract, tool interfaces, incident state and release record independent of Kubernetes so the same image can later run on Azure Container Apps as a small standby. This is a portability requirement, not authorization to provision failover infrastructure now. Keep alert intake and durable incident evidence outside AKS when automatic incident handling is implemented; otherwise an AKS outage could disable the trigger and erase work in progress. A standby would provide degraded investigation using external Azure, GitHub and exported telemetry sources, not guaranteed access to in-cluster LGTM services or an unavailable Kubernetes API. Intentional cluster teardown must not trigger failover. [Container Apps scaling](https://learn.microsoft.com/en-us/azure/container-apps/scale-app), [AKS control-plane log export](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/kubernetes-monitoring-enable)
+
+**Foundry's role:** use the existing Foundry account for models and evaluate trace integration. Foundry can register an externally hosted agent for trace viewing and evaluation, but that feature is preview and does not host, proxy or invoke the AKS runtime. The catalog and deployment pipeline therefore remain the source of versioned agent intent and container releases; do not claim Foundry-managed agent lifecycle for this deployment. [Foundry external agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/register-external-agent)
+
+**The harness** is the surrounding engineering system that makes an agent dependable: event handling, tool contracts and permissions, working state, coding isolation, retries, budgets, validation and review. Build only the capabilities required by the first agent, with contracts reusable by later agents.
 
 **MCP (Model Context Protocol)** is a standard interface through which an agent can call named tools. A diagnostic MCP service could expose bounded operations such as `get_workload_health`, `get_recent_events`, `query_service_logs`, `query_error_rate` and `compare_deployed_revision`. It should return time-bounded results with source links, timestamps and truncation limits. Do not give the model an unrestricted shell or Kubernetes API token when a narrower tool will answer the question. [Foundry MCP server guidance](https://learn.microsoft.com/en-us/azure/foundry/mcp/build-your-own-mcp-server), [OWASP excessive agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
 
-### How a Foundry agent investigates AKS
+### How the AKS-hosted agent investigates
 
 1. The agent asks a diagnostic tool a specific question, such as the health and recent events of a named workload.
-2. The tool authenticates the agent with Microsoft Entra, authorizes the requested operation and target, then reads AKS or the existing observability services with its own read-only identity. Authentication to a tool is not authorization to every namespace or API.
+2. The tool authenticates the agent, authorizes the requested operation and target, then reads AKS or the existing observability services with its own read-only identity. Authentication to a tool is not authorization to every namespace or API.
 3. The tool returns bounded evidence. The agent compares it with deployment history, source and competing hypotheses, and records where each conclusion came from.
 
-The tool may run in or near AKS; the reasoning agent can remain in Foundry. The network path has not been selected. Prefer a private connection where the existing Foundry account supports it. If it cannot privately reach a tool, compare an Entra-protected endpoint with a managed relay or a separately isolated Foundry hosting resource. Verify the actual route, backend bypass protection, token audience and AKS permissions before choosing. Foundry's outbound networking and tool support differ by configuration, and its documentation says bring-your-own virtual network injection is a creation-time choice; the existing account must be inspected rather than assumed to support it. [Foundry networking options](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/networking-options), [toolbox network isolation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox-network-isolation)
+The agent and its first diagnostic tools can run in AKS, with least-privilege Kubernetes access and a verified outbound route to Foundry inference. Keep tool responses and incident evidence portable so a future standby can use external implementations of the same capabilities. A private endpoint to Foundry controls the inbound path to that service; it does not by itself establish an agent egress route. Verify identity, DNS, network path and tool permissions in a live read-only test. [Foundry networking options](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/networking-options)
 
 Azure SRE Agent is a separate managed product with built-in AKS diagnostics. Its tools are useful as a benchmark, but their existence does not grant the same capability to an arbitrary Foundry custom agent. [Azure SRE Agent connectors](https://learn.microsoft.com/en-us/azure/sre-agent/connectors)
 
@@ -72,7 +76,7 @@ The incident trigger, diagnostic identity and coding identity are separate. Shor
 | Evaluation suite | Versioned cases, expected behavior, thresholds and human adjudication. |
 | Release record | Agent/tool/prompt versions, evaluation result, approver and rollback target. |
 
-The template should generate or validate a Foundry agent version through a repeatable pipeline, with configuration review before publication. Prefer supported Foundry APIs and existing portfolio CI/chart conventions over another bespoke framework. Reuse shared platform templates where Kubernetes or CI resources are needed. The first SRE agent must prove the template works without embedding SRE-specific defaults in shared packages.
+The template should validate agent intent and produce a pinned container release through a repeatable pipeline, with configuration review before publication. It must not depend on Kubernetes-only environment variables, mounted paths or service names in agent code; host-specific adapters and values supply those details. Prefer supported Foundry APIs for model and evaluation capabilities and existing portfolio CI/chart conventions over another bespoke framework. Reuse shared platform templates where Kubernetes or CI resources are needed. The first SRE agent must prove the template works without embedding SRE-specific defaults in shared packages.
 
 ## Evaluation and release gates
 
@@ -98,9 +102,10 @@ These sources describe vendor capabilities, not measured effectiveness or market
 ## Decisions and first proof
 
 1. Choose the first trigger: a selected GitHub/Linear issue, an observability alert, or both. A manually selected issue followed by alert-driven shadow runs is a low-noise first sequence.
-2. Choose Foundry prompt versus hosted agent after verifying this account's capabilities, tool authentication and network path. Do not create another Foundry resource or expose AKS as an assumed prerequisite.
-3. Prove one read-only Foundry-to-AKS diagnostic tool call on a known fault after AKS is rebuilt. Record identity, network route, returned evidence and trace. Then compare its diagnosis with an experienced engineer's reference.
+2. Package the SRE agent as one container and deploy its first runtime to AKS through reusable application templates. Verify the AKS-to-Foundry inference route and identity; no additional Foundry hosting resource is assumed.
+3. Prove one read-only diagnostic tool call on a known AKS fault after the cluster is rebuilt. Record identity, network route, returned evidence and trace. Then compare its diagnosis with an experienced engineer's reference.
 4. Choose whether passing deterministic gates may create a draft PR automatically. Review, merge and deployment remain human-governed.
 5. Decide which accessible managed product to use for the first like-for-like benchmark.
+6. Before implementing failover, define the AKS failure boundary, external trigger and evidence sources, recovery target, duplicate-work protection and maintenance/teardown behaviour. Test the same image on the standby host only in that later scope.
 
-No agent, diagnostic tool, event route or PR automation described here is deployed by this document.
+No agent, diagnostic tool, event route, standby or PR automation described here is deployed by this document.
