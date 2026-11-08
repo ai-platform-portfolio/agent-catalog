@@ -60,6 +60,10 @@ protocol host serves `/invocations` and `/readiness` on port 8088; Foundry
 injects the project endpoint and a per-agent identity at runtime. Model calls
 use Entra tokens scoped to `https://ai.azure.com/.default`. The catalog image
 does not contain grader cases or expected answers.
+The model client reads optional `MODEL_BASE_URL` and `MODEL_TOKEN_SCOPE` release
+settings, so a later OpenAI-compatible gateway route can be introduced without
+changing the SRE handler or manifest. Gateway authentication and policy still
+need their own integration test.
 
 This PR supplies the template, image and publication command. The private
 deployer, project ACR grant, live Foundry version, authenticated invocation and

@@ -7,11 +7,11 @@ from pathlib import Path
 
 from agent_factory.manifest import load_agent
 
+from .model import model_client
+
 
 def build_app():
     from azure.ai.agentserver.invocations import InvocationAgentServerHost
-    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-    from openai import OpenAI
     from opentelemetry import trace
     from starlette.responses import JSONResponse
 
@@ -20,8 +20,7 @@ def build_app():
     handler = getattr(importlib.import_module(module_name), function_name)
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
     model = os.environ.get("MODEL_DEPLOYMENT_NAME", manifest.model)
-    token = get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")
-    client = OpenAI(base_url=f"{endpoint}/openai/v1/", api_key=token, max_retries=1)
+    client = model_client(endpoint)
     tracer = trace.get_tracer(__name__)
 
     app = InvocationAgentServerHost()

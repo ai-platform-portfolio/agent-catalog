@@ -2,10 +2,12 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from opentelemetry.sdk.trace import TracerProvider
 
 from agent_runtime.runner import load_agent, load_case, run_case, run_incident
+from agent_runtime.model import model_client
 
 
 CASE = Path(__file__).resolve().parents[1] / "evals/cases/ai-190-foundry-private-endpoint.yaml"
@@ -36,6 +38,18 @@ class FakeResponses:
 
 
 class RunnerTests(unittest.TestCase):
+    @patch("agent_runtime.model.OpenAI")
+    @patch("agent_runtime.model.get_bearer_token_provider")
+    @patch("agent_runtime.model.DefaultAzureCredential")
+    def test_model_route_can_change_without_handler_change(self, credential, provider, openai):
+        with patch.dict("os.environ", {"MODEL_BASE_URL": "https://gateway.example.test/openai/v1/", "MODEL_TOKEN_SCOPE": "api://gateway/.default"}):
+            model_client("https://foundry.example.test/api/projects/management")
+        self.assertEqual(openai.call_args.kwargs["base_url"], "https://gateway.example.test/openai/v1/")
+        self.assertEqual(provider.call_args.args[1], "api://gateway/.default")
+        with patch.dict("os.environ", {"MODEL_BASE_URL": "http://gateway.example.test/openai/v1/"}):
+            with self.assertRaisesRegex(ValueError, "HTTPS"):
+                model_client("https://foundry.example.test/api/projects/management")
+
     def test_grader_is_withheld_and_requested_fixture_is_returned(self):
         case = load_case(CASE)
         agent = load_agent(AGENT)

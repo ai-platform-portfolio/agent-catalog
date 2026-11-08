@@ -59,8 +59,6 @@ def main():
     if args.case is None:
         parser.error("run requires --case")
 
-    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-    from openai import OpenAI
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.resources import Resource
@@ -68,11 +66,11 @@ def main():
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     from .runner import load_case, run_case
+    from .model import model_client
 
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
     model = os.environ.get("MODEL_DEPLOYMENT_NAME", agent.model)
-    token = get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")
-    client = OpenAI(base_url=f"{endpoint}/openai/v1/", api_key=token, max_retries=1)
+    client = model_client(endpoint)
 
     provider = TracerProvider(resource=Resource.create({"service.name": "agent-catalog"}))
     if os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
