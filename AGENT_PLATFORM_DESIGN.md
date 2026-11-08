@@ -1,6 +1,6 @@
 # Reusable agent platform design
 
-**Status:** design baseline, 8 November 2026. The first evaluation case is recorded in [evals/cases/ai-190-foundry-private-endpoint.yaml](evals/cases/ai-190-foundry-private-endpoint.yaml). No SRE agent runtime or incident automation is deployed.
+**Status:** design baseline, 8 November 2026. The first evaluation case is recorded in [evals/cases/ai-190-foundry-private-endpoint.yaml](evals/cases/ai-190-foundry-private-endpoint.yaml). An isolated AKS acceptance release ran that recorded case; there is no durable agent delivery or incident automation yet. See [the provisional result](evals/results/ai-190-first-run.md).
 
 ## Goal
 
@@ -10,8 +10,8 @@ The first agent should investigate application and infrastructure incidents, ide
 
 ## Current platform and limits
 
-- The GitOps bootstrap owns `foundry-management-portfolio` in France Central, with a `management` project and `chat` deployment of `gpt-6.1-sol` (`2026-09-29`, `DataZoneStandard`). Local key authentication is disabled; selected-IP operator access and the UK South private endpoint remain. The user's intended SRE-agent reasoning effort is `medium`. The model's diagnosis and coding quality remain unmeasured.
-- AKS is running with its GitOps packages, including Argo Events, the LGTM observability stack (Loki logs, Grafana, Tempo traces and Mimir metrics), OpenTelemetry, Langfuse, Holmes, Testkube, SonarQube, Argo CD, Kargo, Backstage and Azure Service Operator. Package installation does not establish agent-specific tracing, tools or diagnoses.
+- The GitOps bootstrap owns `foundry-management-portfolio` in France Central, with a `management` project and `chat` deployment of `gpt-6.1-sol` (`2026-09-29`, `DataZoneStandard`). Local key authentication is disabled; selected-IP operator access and the UK South private endpoint remain. The SRE agent uses `medium` reasoning. One reconstructed diagnosis scored provisionally; broader diagnosis and coding quality remain unmeasured.
+- AKS is running with its GitOps packages, including Argo Events, the LGTM observability stack (Loki logs, Grafana, Tempo traces and Mimir metrics), OpenTelemetry, Langfuse, Holmes, Testkube, SonarQube, Argo CD, Kargo, Backstage and Azure Service Operator. The recorded-case run verified agent traces in Tempo and Langfuse. Live diagnostic tools and automatic incident handling remain unimplemented.
 - After the Foundry account replacement disconnected its retained private endpoint, the endpoint was recreated and its three private DNS records restored. A keyless `medium`-reasoning Responses API request from the Holmes pod over the private path returned HTTP 200. This proves one workload identity and network route, not a Holmes investigation or an SRE-agent run. Holmes remains a comparison candidate, not an assumed dependency.
 - A separate session is moving the model gateway into this organization for Azure and Gemini on Google Cloud. Its interface, ownership and deployment are not yet established here; this design does not presume that integration is complete.
 

@@ -21,6 +21,7 @@ release gate. A diagnosis pass does not prove the agent can implement or validat
 a code change; draft-PR quality needs a separate evaluation stage.
 
 The first case reconstructs a real portfolio incident from recorded Azure and
-Terraform checks. It has not been run against an agent. Tool outputs are
+Terraform checks. Its first agent run and provisional score are recorded in
+[results/ai-190-first-run.md](results/ai-190-first-run.md). Tool outputs are
 sanitized summaries rather than captured raw API responses, so scores from this
 case must not be presented as a production benchmark.
