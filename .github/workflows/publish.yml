@@ -1,0 +1,45 @@
+name: Validate and publish agent
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  issue:
+    if: github.event_name == 'pull_request'
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/linear-issue-check.yml@7ed775ef5c3077a99f49e859816ffc095c54d18a
+    secrets:
+      LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
+      LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - run: pip install .
+      - run: python -m unittest discover -s tests -v
+
+  image:
+    needs: test
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@7ed775ef5c3077a99f49e859816ffc095c54d18a
+    with:
+      image: portfolio/agent-catalog
+      revision: ${{ github.event.pull_request.head.sha || github.sha }}
+      publish-preview: true
+      tag: ${{ github.event_name == 'pull_request' && format('preview-ai192-{0}', github.event.pull_request.head.sha) || '' }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

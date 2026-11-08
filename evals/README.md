@@ -4,8 +4,8 @@ Each case records an incident for repeatable agent evaluation. `incident` is the
 initial prompt. `tool_fixtures` are returned only when an agent requests the named
 read-only capability. `reference` and `rubric` are withheld from the agent and
 used by a human reviewer or a future evaluator. A single file keeps the incident,
-evidence and expected outcome versioned together; the harness must enforce these
-visibility boundaries when it is implemented.
+evidence and expected outcome versioned together; the runner enforces these
+visibility boundaries in model requests.
 
 Use the same top-level fields for later cases: `schema_version`, `id`, `version`,
 `provenance`, `incident`, `tool_fixtures`, `reference` and `rubric`. Fixture names
