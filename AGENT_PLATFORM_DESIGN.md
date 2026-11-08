@@ -1,6 +1,6 @@
 # Reusable agent platform design
 
-**Status:** discussion draft, 7 November 2026. This document describes a proposed design, not a deployed agent or an approved implementation scope.
+**Status:** design baseline, 8 November 2026. The first evaluation case is recorded in [evals/cases/ai-190-foundry-private-endpoint.yaml](evals/cases/ai-190-foundry-private-endpoint.yaml). No SRE agent runtime or incident automation is deployed.
 
 ## Goal
 
@@ -10,10 +10,9 @@ The first agent should investigate application and infrastructure incidents, ide
 
 ## Current platform and limits
 
-- `foundry-management-portfolio` was rebuilt on 7 November through the GitOps bootstrap root. Subsequent approved changes enabled selected-IP public access with default deny while retaining the private endpoint and disabled local key authentication. An authenticated model-list request succeeded; no SRE-agent inference test has been completed. AKS and its GitOps packages remain down after teardown. See the workspace's `PLATFORM_LIFECYCLE.md` for current lifecycle evidence.
-- The bootstrap declares a `management` Foundry project and `chat` deployment of `gpt-4.1-mini`. Its suitability for SRE diagnosis or code repair is unmeasured. Model selection should use task-specific evaluations, not a default assumption.
-- When AKS is running, GitOps installs Argo Events, the LGTM observability stack (Loki logs, Grafana, Tempo traces and Mimir metrics), OpenTelemetry, Langfuse, Holmes, Testkube, SonarQube, Argo CD, Kargo, Backstage and Azure Service Operator. Installation does not prove that an agent can authenticate, reach these services or make a correct diagnosis.
-- Holmes is configured as a private, read-only Kubernetes and telemetry investigator using Foundry inference. Its live model call and value as a tool for another agent remain unproven. It is a candidate capability to evaluate, not a dependency to assume.
+- The GitOps bootstrap owns `foundry-management-portfolio` in France Central, with a `management` project and `chat` deployment of `gpt-6.1-sol` (`2026-09-29`, `DataZoneStandard`). Local key authentication is disabled; selected-IP operator access and the UK South private endpoint remain. The user's intended SRE-agent reasoning effort is `medium`. The model's diagnosis and coding quality remain unmeasured.
+- AKS is running with its GitOps packages, including Argo Events, the LGTM observability stack (Loki logs, Grafana, Tempo traces and Mimir metrics), OpenTelemetry, Langfuse, Holmes, Testkube, SonarQube, Argo CD, Kargo, Backstage and Azure Service Operator. Package installation does not establish agent-specific tracing, tools or diagnoses.
+- After the Foundry account replacement disconnected its retained private endpoint, the endpoint was recreated and its three private DNS records restored. A keyless `medium`-reasoning Responses API request from the Holmes pod over the private path returned HTTP 200. This proves one workload identity and network route, not a Holmes investigation or an SRE-agent run. Holmes remains a comparison candidate, not an assumed dependency.
 - A separate session is moving the model gateway into this organization for Azure and Gemini on Google Cloud. Its interface, ownership and deployment are not yet established here; this design does not presume that integration is complete.
 
 ## Proposed architecture
@@ -31,7 +30,7 @@ Incident or approved issue
     -> existing merge and delivery controls
 ```
 
-**Hosting direction, 7 November 2026:** deploy the first agent container on the existing AKS cluster when it is running. Keep its image, configuration contract, tool interfaces, incident state and release record independent of Kubernetes so the same image can later run on Azure Container Apps as a small standby. This is a portability requirement, not authorization to provision failover infrastructure now. Keep alert intake and durable incident evidence outside AKS when automatic incident handling is implemented; otherwise an AKS outage could disable the trigger and erase work in progress. A standby would provide degraded investigation using external Azure, GitHub and exported telemetry sources, not guaranteed access to in-cluster LGTM services or an unavailable Kubernetes API. Intentional cluster teardown must not trigger failover. [Container Apps scaling](https://learn.microsoft.com/en-us/azure/container-apps/scale-app), [AKS control-plane log export](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/kubernetes-monitoring-enable)
+**Hosting direction:** deploy the first agent container on the existing AKS cluster. Keep its image, configuration contract, tool interfaces, incident state and release record independent of Kubernetes so the same image can later run on Azure Container Apps as a small standby. This is a portability requirement, not authorization to provision failover infrastructure now. Keep alert intake and durable incident evidence outside AKS when automatic incident handling is implemented; otherwise an AKS outage could disable the trigger and erase work in progress. A standby would provide degraded investigation using external Azure, GitHub and exported telemetry sources, not guaranteed access to in-cluster LGTM services or an unavailable Kubernetes API. Intentional cluster teardown must not trigger failover. [Container Apps scaling](https://learn.microsoft.com/en-us/azure/container-apps/scale-app), [AKS control-plane log export](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/kubernetes-monitoring-enable)
 
 **Foundry's role:** use the existing Foundry account for models and evaluate trace integration. Foundry can register an externally hosted agent for trace viewing and evaluation, but that feature is preview and does not host, proxy or invoke the AKS runtime. The catalog and deployment pipeline therefore remain the source of versioned agent intent and container releases; do not claim Foundry-managed agent lifecycle for this deployment. [Foundry external agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/register-external-agent)
 
@@ -101,9 +100,9 @@ These sources describe vendor capabilities, not measured effectiveness or market
 
 ## Decisions and first proof
 
-1. Choose the first trigger: a selected GitHub/Linear issue, an observability alert, or both. A manually selected issue followed by alert-driven shadow runs is a low-noise first sequence.
-2. Package the SRE agent as one container and deploy its first runtime to AKS through reusable application templates. Verify the AKS-to-Foundry inference route and identity; no additional Foundry hosting resource is assumed.
-3. Prove one read-only diagnostic tool call on a known AKS fault after the cluster is rebuilt. Record identity, network route, returned evidence and trace. Then compare its diagnosis with an experienced engineer's reference.
+1. Start with the selected AI-190 incident as an offline case. Add an authenticated Argo Events alert for shadow runs after its reference diagnosis is documented; do not poll for incidents.
+2. Package the SRE agent as one container and deploy its first runtime to AKS through reusable application templates. Verify the new agent's own identity and private inference route; the Holmes-pod probe does not grant that identity. No additional Foundry hosting resource is assumed.
+3. Use the real [AI-190 Foundry private-endpoint incident](evals/cases/ai-190-foundry-private-endpoint.yaml) as the first offline diagnosis case. Prove read-only diagnostic tool calls on that evidence, record their identity, route and trace, then compare the diagnosis with the engineer reference. A preview-only application incident follows to test a different fault domain.
 4. Choose whether passing deterministic gates may create a draft PR automatically. Review, merge and deployment remain human-governed.
 5. Decide which accessible managed product to use for the first like-for-like benchmark.
 6. Before implementing failover, define the AKS failure boundary, external trigger and evidence sources, recovery target, duplicate-work protection and maintenance/teardown behaviour. Test the same image on the standby host only in that later scope.
