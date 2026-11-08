@@ -54,7 +54,7 @@ The agent should follow a reviewable engineering loop:
 
 1. **Triage:** establish severity, impact, affected service, time window and recent changes. Correlate duplicate alerts into one investigation.
 2. **Diagnose:** form competing hypotheses, collect evidence that could disprove them, identify uncertainty and distinguish a transient symptom from a persistent defect.
-3. **Assign ownership:** change the repository that owns the source. Application code and SQL stay in the application repository; reusable application templates in `application-helm-chart`; shared platform packages in `gitops`; reusable CI capabilities in `ops-shared`. An incident may require coordinated PRs, but no copied infrastructure workaround.
+3. **Assign ownership:** change the repository that owns the source. Application code and SQL stay in the application repository; reusable agent code in `application-library`; application templates in `application-helm-chart`; shared platform packages in `gitops`; reusable CI capabilities in `ops-shared`. An incident may require coordinated PRs, but no copied infrastructure workaround.
 4. **Implement:** use an isolated, temporary coding workspace with only the target repository and required tools. Add a meaningful regression check and make the smallest durable change. Infrastructure plans are read-only evidence; creating a PR does not authorize an apply, live mutation, merge or production promotion.
 5. **Validate:** run relevant tests, static checks and source-policy gates. Use a preview when available and safe. For infrastructure, inspect the exact Terraform/Helm/Argo diff and lifecycle implications. The agent iterates on failed checks within a bounded budget.
 6. **Present:** open a draft PR linked to the incident and its Linear work issue, with root-cause evidence, alternative hypotheses, validation results, risks and missing live proof. Human review and existing branch protection remain authoritative. [GitHub protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
@@ -63,7 +63,7 @@ The incident trigger, diagnostic identity and coding identity are separate. Shor
 
 ## Reusable agent-creation contract
 
-`agent-catalog` is the reviewable source for agent intent, not a second owner of shared platform infrastructure. The first hosted template collects an id, handler, model, instructions, limits and evaluation suite; later lifecycle slices must add:
+`application-library/agent-factory` owns the reusable hosted-agent package. `agent-catalog` is its first consumer and the reviewable source for SRE intent and evaluations. The first manifest collects an id, handler, model, instructions, limits and evaluation suite; later lifecycle slices must add:
 
 | Input | Meaning |
 | --- | --- |
@@ -75,7 +75,7 @@ The incident trigger, diagnostic identity and coding identity are separate. Shor
 | Evaluation suite | Versioned cases, expected behavior, thresholds and human adjudication. |
 | Release record | Agent/tool/prompt versions, evaluation result, approver and rollback target. |
 
-The current template validates every manifest, uses the existing `ops-shared` image workflow, and prepares an immutable-image draft Foundry version through the official SDK. Future agents add a manifest, handler and evaluation cases without changing factory code. The publisher must later run inside the private network and be connected to a promotion gate; this PR alone does not deploy or route a live agent. It does not depend on Kubernetes-only environment variables, mounted paths or service names in agent code. Reuse shared platform templates where Kubernetes or CI resources are needed.
+The factory validates every manifest and prepares an immutable-image draft Foundry version through the official SDK; `agent-catalog` uses the existing `ops-shared` image workflow. Future agent repositories install the same pinned factory package and supply their own manifest, handler and evaluation cases. The publisher must later run inside the private network and be connected to a promotion gate; these code PRs alone do not deploy or route a live agent. Reuse shared platform templates where Kubernetes or CI resources are needed.
 
 ## Evaluation and release gates
 

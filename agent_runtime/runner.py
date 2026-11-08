@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_factory.manifest import Agent, load_agent
+from portfolio_agent_factory.manifest import Agent, load_agent
 
 
 @dataclass(frozen=True)
