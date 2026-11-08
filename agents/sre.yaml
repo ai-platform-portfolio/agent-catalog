@@ -1,5 +1,10 @@
 schema_version: 1
 id: sre
+kind: hosted
+protocol: invocations
+model: chat
+handler: agent_runtime.runner:run_incident
+eval_suite: ai-190
 reasoning_effort: medium
 
 limits:

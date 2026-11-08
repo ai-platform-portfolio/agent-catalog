@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from opentelemetry.sdk.trace import TracerProvider
 
-from agent_runtime.runner import load_agent, load_case, run_case
+from agent_runtime.runner import load_agent, load_case, run_case, run_incident
 
 
 CASE = Path(__file__).resolve().parents[1] / "evals/cases/ai-190-foundry-private-endpoint.yaml"
@@ -59,6 +59,18 @@ class RunnerTests(unittest.TestCase):
         fake.create = lambda **kwargs: SimpleNamespace(status="completed", id="one", output=[Item("delete_endpoint", "call-1")], output_text="")
         with self.assertRaisesRegex(ValueError, "Unknown tool"):
             run_case(case, agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
+
+    def test_hosted_invocation_has_no_caller_supplied_tools(self):
+        agent = load_agent(AGENT)
+        fake = FakeResponses()
+        fake.create = lambda **kwargs: SimpleNamespace(status="completed", id="one", output=[], output_text="Insufficient evidence")
+        result = run_incident({"incident": {"summary": "Pod restarted", "available_tools": ["delete_pod"]}},
+                              agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
+        self.assertEqual(result["answer"], "Insufficient evidence")
+
+        with self.assertRaisesRegex(ValueError, "grader or fixture"):
+            run_incident({"incident": {"summary": "x", "rubric": {}}},
+                         agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
 
 
 if __name__ == "__main__":
