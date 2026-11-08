@@ -1,6 +1,6 @@
 schema_version: 1
 id: ai-190-foundry-private-endpoint
-version: 1
+version: 2
 
 provenance:
   kind: reconstructed_real_incident
@@ -65,11 +65,13 @@ tool_fixtures:
   get_terraform_reconciliation:
     ordinary_post_replacement_plan: No changes
   inspect_foundry_module:
+    module_repository: https://github.com/ai-platform-portfolio/terraform
     account_resource: modules/azure/foundry/main.tf:azapi_resource.account
     endpoint_resource: modules/azure/foundry/main.tf:azapi_resource.private_endpoint
     endpoint_target_expression: azapi_resource.account.id
     endpoint_replacement_trigger_before_fix: absent
     caller_pin: gitops/bootstrap/main.tf
+    caller_repository: https://github.com/ai-platform-portfolio/gitops
 
 reference:
   observed_failure: >-
