@@ -33,6 +33,9 @@ jobs:
 
   image:
     needs: test
+    permissions:
+      contents: read
+      id-token: write
     uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@7ed775ef5c3077a99f49e859816ffc095c54d18a
     with:
       image: portfolio/agent-catalog
