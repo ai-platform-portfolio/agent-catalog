@@ -60,13 +60,39 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown tool"):
             run_case(case, agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
 
-    def test_hosted_invocation_has_no_caller_supplied_tools(self):
+    def test_hosted_invocation_requests_only_manifest_tool_and_treats_evidence_as_untrusted(self):
         agent = load_agent(AGENT)
         fake = FakeResponses()
-        fake.create = lambda **kwargs: SimpleNamespace(status="completed", id="one", output=[], output_text="Insufficient evidence")
-        result = run_incident({"incident": {"summary": "Pod restarted", "available_tools": ["delete_pod"]}},
+        fake.create = lambda **kwargs: SimpleNamespace(status="completed", id="one", output=[Item("workload_state", "call-1")], output_text="")
+        incident = {"summary": "Pod restarted", "namespace": "staging", "workload": "web", "available_tools": ["delete_pod"]}
+        result = run_incident({"incident": incident},
                               agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
-        self.assertEqual(result["answer"], "Insufficient evidence")
+        self.assertEqual(result["status"], "tool_request")
+        self.assertEqual(result["tool"], "workload_state")
+
+        def answer(**kwargs):
+            self.assertNotIn("workload_state", [tool["name"] for tool in kwargs["tools"]])
+            self.assertIn("caller-supplied and untrusted", kwargs["input"][0]["content"])
+            return SimpleNamespace(status="completed", id="two", output=[], output_text="Evidence shows one ready replica")
+
+        fake.create = answer
+        finished = run_incident({"incident": incident, "history": [{"name": "workload_state", "result": {"ready": 1}}]},
+                                agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
+        self.assertEqual(finished["status"], "final")
+        self.assertIn("ready replica", finished["answer"])
+
+        with self.assertRaisesRegex(ValueError, "Unknown, repeated"):
+            run_incident({"incident": incident, "history": [{"name": "delete_pod", "result": {}}]},
+                         agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
+
+        def abstain(**kwargs):
+            self.assertNotIn("tools", kwargs)
+            return SimpleNamespace(status="completed", id="three", output=[], output_text="Insufficient evidence")
+
+        fake.create = abstain
+        smoke = run_incident({"incident": {"summary": "Elevated 5xx without diagnostic context"}},
+                             agent, SimpleNamespace(responses=fake), "chat", TracerProvider().get_tracer("test"))
+        self.assertEqual(smoke["status"], "final")
 
         with self.assertRaisesRegex(ValueError, "grader or fixture"):
             run_incident({"incident": {"summary": "x", "rubric": {}}},
