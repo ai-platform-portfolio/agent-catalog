@@ -1,6 +1,6 @@
 # Reusable agent platform design
 
-**Status:** Foundry-hosted implementation in draft PR2, 8 November 2026. The prior isolated AKS run remains [provisional evaluation evidence](evals/results/ai-190-first-run.md); no hosted agent or incident automation is deployed yet.
+**Status:** The reusable factory and SRE consumer merged on 8 November 2026. AI-194 adds the first private-network release path; no hosted agent or incident automation is deployed yet. The prior isolated AKS run remains [provisional evaluation evidence](evals/results/ai-190-first-run.md).
 
 ## Goal
 
@@ -75,7 +75,7 @@ The incident trigger, diagnostic identity and coding identity are separate. Shor
 | Evaluation suite | Versioned cases, expected behavior, thresholds and human adjudication. |
 | Release record | Agent/tool/prompt versions, evaluation result, approver and rollback target. |
 
-The factory validates every manifest and prepares an immutable-image draft Foundry version through the official SDK; `agent-catalog` uses the existing `ops-shared` image workflow. Future agent repositories install the same pinned factory package and supply their own manifest, handler and evaluation cases. The publisher must later run inside the private network and be connected to a promotion gate; these code PRs alone do not deploy or route a live agent. Reuse shared platform templates where Kubernetes or CI resources are needed.
+The factory validates every manifest and prepares immutable-image Foundry versions through the official SDK; `agent-catalog` uses the existing `ops-shared` image workflow. Future agent repositories install the same pinned factory package and supply their own manifest, handler and evaluation cases. AI-194 adds a reusable private-network Job for a first release and smoke invocation. A different revision remains blocked until candidate testing and explicit promotion are implemented. Caller-side spans reach the existing collector; internal hosted spans need a separate telemetry connection. Reuse shared platform templates where Kubernetes or CI resources are needed.
 
 ## Evaluation and release gates
 
@@ -101,7 +101,7 @@ These sources describe vendor capabilities, not measured effectiveness or market
 ## Decisions and first proof
 
 1. Start with the selected AI-190 incident as an offline case. Add an authenticated Argo Events alert for shadow runs after its reference diagnosis is documented; do not poll for incidents.
-2. Publish a digest-pinned catalog image, create a draft hosted SRE version in Foundry, and verify its status, invocation and trace before routing it to production traffic. The project needs an ACR pull grant and the publisher needs a private path and Foundry Project Manager access.
+2. Publish a digest-pinned catalog image, grant project ACR pull and shared publisher access, then create the first release from a private AKS Job. Verify Active status, invocation and the caller trace. Later versions need a candidate test and explicit promotion gate.
 3. Use the real [AI-190 Foundry private-endpoint incident](evals/cases/ai-190-foundry-private-endpoint.yaml) as the first offline diagnosis case. Prove read-only diagnostic tool calls on that evidence, record their identity, route and trace, then compare the diagnosis with the engineer reference. A preview-only application incident follows to test a different fault domain.
 4. Choose whether passing deterministic gates may create a draft PR automatically. Review, merge and deployment remain human-governed.
 5. Decide which accessible managed product to use for the first like-for-like benchmark.

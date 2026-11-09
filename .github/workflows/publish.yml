@@ -33,6 +33,8 @@ jobs:
 
       - run: python -m portfolio_agent_factory validate
 
+      - run: python -m json.tool smoke/sre.json > /dev/null
+
   image:
     needs: test
     permissions:
@@ -43,8 +45,23 @@ jobs:
       image: portfolio/agent-catalog
       revision: ${{ github.event.pull_request.head.sha || github.sha }}
       publish-preview: true
-      tag: ${{ github.event_name == 'pull_request' && format('preview-ai192-{0}', github.event.pull_request.head.sha) || '' }}
+      tag: ${{ github.event_name == 'pull_request' && format('preview-pr{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  release-record:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Record immutable release input
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          REVISION: ${{ needs.image.outputs.revision }}
+        run: |
+          test -n "$DIGEST" && test -n "$REVISION"
+          printf 'Image: `localacrk8s.azurecr.io/portfolio/agent-catalog@%s`\nRevision: `%s`\n' "$DIGEST" "$REVISION" >> "$GITHUB_STEP_SUMMARY"
