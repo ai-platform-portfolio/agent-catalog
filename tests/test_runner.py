@@ -9,6 +9,7 @@ from agent_runtime.runner import load_agent, load_case, run_case, run_incident
 
 
 CASE = Path(__file__).resolve().parents[1] / "evals/cases/ai-190-foundry-private-endpoint.yaml"
+BASELINE = Path(__file__).resolve().parents[1] / "evals/cases/sre-staging-baseline.yaml"
 AGENT = Path(__file__).resolve().parents[1] / "agents/sre.yaml"
 
 
@@ -36,6 +37,25 @@ class FakeResponses:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_staging_baseline_withholds_reference_and_does_not_invent_recovery(self):
+        class BaselineResponses:
+            def __init__(self):
+                self.requests = []
+
+            def create(self, **kwargs):
+                self.requests.append(kwargs)
+                if len(self.requests) == 1:
+                    return SimpleNamespace(status="completed", id="one", output=[Item("workload_state", "call-1")], output_text="")
+                return SimpleNamespace(status="completed", id="two", output=[], output_text="One ready replica; no outage established")
+
+        fake = BaselineResponses()
+        result = run_case(load_case(BASELINE), load_agent(AGENT), SimpleNamespace(responses=fake),
+                          "chat", TracerProvider().get_tracer("test"))
+        self.assertEqual(result["tool_calls"], ["workload_state"])
+        self.assertIn("no outage", result["answer"])
+        self.assertNotIn("reference", json.dumps(fake.requests))
+        self.assertNotIn("rubric", json.dumps(fake.requests))
+
     def test_grader_is_withheld_and_requested_fixture_is_returned(self):
         case = load_case(CASE)
         agent = load_agent(AGENT)

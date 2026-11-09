@@ -66,7 +66,9 @@ remain later work.
 
 `agents/sre.yaml` declares four fixed tools: workload state, recent events,
 bounded logs and fixed service metrics. `incidents/sre-staging.json` is a
-read-only baseline input, not an injected outage. The shared
+read-only baseline input, not an injected outage. The
+`evals/cases/sre-staging-baseline.yaml` case records the observed healthy
+Deployment and Pod state for offline abstention checks. The shared
 `agent-factory/diagnostics-chart` runs a short-lived broker Job using the
 separate GitOps-managed diagnostic identity. Set only agent id, immutable image
 digest, full revision, incident path and namespace. The broker rejects an
