@@ -12,7 +12,7 @@ Add `agents/<id>.yaml`, an importable handler in `agent_runtime/`, a versioned
 evaluation case and focused handler tests. The package supplies hosted
 Invocations defaults and validates every manifest in CI. The existing
 `ops-shared` Docker workflow publishes one immutable amd64 catalog image;
-each Foundry agent version selects its manifest with `AGENT_MANIFEST`.
+each Foundry agent version selects its manifest with `PORTFOLIO_MANIFEST_PATH`.
 
 For the SRE agent, run validation and the recorded offline case:
 
@@ -25,10 +25,13 @@ python -m agent_runtime --agent agents/sre.yaml \
 ```
 
 The replay supplies recorded read-only evidence only after a requested tool
-call. The model never receives the case reference or rubric. The current hosted
-SRE handler accepts only `{"incident": {...}}` and has no live diagnostic
-tool, so it must abstain when evidence is insufficient. The recorded v1/v2
-evaluation results predate Foundry hosting and remain historical evidence.
+call. The model never receives the case reference or rubric. The hosted SRE
+handler now returns one requested tool name or a final answer. The AKS broker
+executes only manifest-listed read-only tools for one approved namespace and
+returns bounded evidence. Without a broker or target namespace/workload, the
+handler still answers from supplied context and must abstain when evidence is
+insufficient. The recorded v1/v2 evaluation results predate this live tool
+path and remain historical evidence.
 
 ## Foundry draft version
 
@@ -54,10 +57,28 @@ default to the Foundry project with Entra tokens for
 `MODEL_TOKEN_SCOPE` release settings support a later authenticated gateway
 without changing the SRE handler.
 
-The first library and catalog PRs delivered code and CI only. The release
-path below adds the missing private publisher and live acceptance step. Alert
-intake, AKS diagnostic tools, PostgreSQL retrieval, coding workspaces and fix
-PRs remain later work.
+The first library and catalog PRs delivered code and CI, followed by a private
+publisher and live acceptance step. The read-only broker is a separate release
+candidate; alert intake, PostgreSQL retrieval, coding workspaces and fix PRs
+remain later work.
+
+## Read-only AKS investigation
+
+`agents/sre.yaml` declares four fixed tools: workload state, recent events,
+bounded logs and fixed service metrics. `incidents/sre-staging.json` is a
+read-only baseline input, not an injected outage. The
+`evals/cases/sre-staging-baseline.yaml` case records the observed healthy
+Deployment and Pod state for offline abstention checks. The shared
+`agent-factory/diagnostics-chart` runs a short-lived broker Job using the
+separate GitOps-managed diagnostic identity. Set only agent id, immutable image
+digest, full revision, incident path and namespace. The broker rejects an
+incident targeting another namespace and never sends its Kubernetes token to
+Foundry. The hosted response labels tool evidence as caller-supplied and
+untrusted; no diagnosis or recovery is implied by this baseline alone.
+
+The current production endpoint serves version 1. Test a new image as a
+candidate-specific Foundry version before routing production traffic to it;
+the first-release command intentionally refuses an implicit revision change.
 
 ## First live release
 

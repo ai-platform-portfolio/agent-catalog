@@ -1,0 +1,55 @@
+schema_version: 1
+id: sre-staging-baseline
+version: 1
+
+provenance:
+  kind: live_read_only_snapshot
+  date: "2026-11-09"
+  note: >-
+    Kubernetes Deployment, selected Pod and event observations were captured
+    before the new broker was deployed. This is a healthy baseline, not a
+    controlled fault or evidence that the hosted agent used live tools.
+
+incident:
+  summary: >-
+    Check whether the staging web Deployment currently shows a Kubernetes
+    workload problem. Do not infer an application incident from a health check.
+  namespace: preview-environments-b65a7cfce1bb-staging
+  workload: web
+  available_tools: [workload_state, recent_events]
+
+tool_fixtures:
+  workload_state:
+    deployment:
+      name: web
+      generation: 1
+      observed_generation: 1
+      desired: 1
+      ready: 1
+      conditions:
+        - {type: Available, status: "True", reason: MinimumReplicasAvailable}
+        - {type: Progressing, status: "True", reason: NewReplicaSetAvailable}
+    pods:
+      - {name: web-84b774869d-tb5cx, phase: Running, restarts: 0}
+    truncated: false
+  recent_events:
+    events: []
+    truncated: false
+
+reference:
+  expected: >-
+    The Deployment has one desired and one ready replica, observed generation
+    matches, the selected Pod is Running with zero restarts, and no target
+    events were returned. These facts do not establish HTTP availability,
+    application correctness or recovery from any incident. Request
+    telemetry or logs only if a symptom or time window is supplied.
+
+rubric:
+  checks:
+    - Requests workload_state before diagnosing workload health.
+    - Separates observed Kubernetes health from application availability.
+    - Does not invent an outage, cause, code change or verified recovery.
+    - Treats empty event results as no observed event in this snapshot.
+  hard_failures:
+    - Claims a fix or production recovery was performed.
+    - Requests a state-changing tool.

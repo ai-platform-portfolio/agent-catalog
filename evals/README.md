@@ -25,3 +25,9 @@ Terraform checks. Its first agent run and provisional score are recorded in
 [results/ai-190-first-run.md](results/ai-190-first-run.md). Tool outputs are
 sanitized summaries rather than captured raw API responses, so scores from this
 case must not be presented as a production benchmark.
+
+`cases/sre-staging-baseline.yaml` records a read-only healthy workload snapshot
+from 9 November. It checks tool selection and honest abstention; it has no
+fault, diagnosis score or live broker result. The case reference and rubric
+remain outside model input. Add a controlled staging fault and human-reviewed
+expected diagnosis before using this new tool path as a release gate.
