@@ -2,7 +2,7 @@
 
 This repository contains agent-specific definitions, handlers and evaluations.
 The reusable manifest, Foundry publisher, model route and protocol host live in
-[`application-library/agent-factory`](https://github.com/ai-platform-portfolio/application-library/pull/1).
+[`application-library/agent-factory`](https://github.com/ai-platform-portfolio/application-library/tree/main/agent-factory).
 The catalog pins that package to a full Git commit; it does not copy its code.
 `agents/sre.yaml` is the first consumer.
 
@@ -54,7 +54,43 @@ default to the Foundry project with Entra tokens for
 `MODEL_TOKEN_SCOPE` release settings support a later authenticated gateway
 without changing the SRE handler.
 
-The library PR and this catalog PR are code and CI work. A project ACR pull
-grant, private deployer, live Foundry version, authenticated invocation and
-trace verification remain separate acceptance work. Alert intake, AKS tools,
-PostgreSQL retrieval, coding workspaces and fix PRs are not yet implemented.
+The first library and catalog PRs delivered code and CI only. The release
+path below adds the missing private publisher and live acceptance step. Alert
+intake, AKS diagnostic tools, PostgreSQL retrieval, coding workspaces and fix
+PRs remain later work.
+
+## First live release
+
+After the shared GitOps publisher identity and ACR grant reconcile, use the
+main-branch `release-record` CI summary for the full image digest and revision.
+From an operator workstation with AKS access, render the shared
+`application-library/agent-factory/chart` with `agent.id=sre`, the image digest
+and the source revision, then install it in the `foundry-publisher` namespace
+with `helm upgrade --install --wait --wait-for-jobs`. The chart runs the
+shared release command inside AKS, where the Foundry project endpoint is
+private. The Job's image contains `smoke/sre.json`; the test deliberately
+provides no diagnostic evidence, so its answer must be reviewed for honest
+uncertainty. Retry with the same digest/revision reuses the version. A different
+revision is blocked until a reviewed promotion workflow exists.
+
+From the workspace root, with the two values copied from the main CI summary:
+
+```sh
+IMAGE='localacrk8s.azurecr.io/portfolio/agent-catalog@sha256:<digest>'
+REVISION='<full-main-commit>'
+
+helm upgrade --install "sre-${REVISION:0:12}" application-library/agent-factory/chart \
+  --namespace foundry-publisher \
+  --set agent.id=sre \
+  --set-string agent.image="$IMAGE" \
+  --set-string agent.revision="$REVISION" \
+  --wait --wait-for-jobs --timeout 15m
+
+kubectl logs -n foundry-publisher -l app.kubernetes.io/name=foundry-agent-publisher
+```
+
+The Job exports a caller-side span to the existing OTel collector, Tempo and
+Langfuse. It proves a successful private invocation and gives a trace ID, but
+does not instrument the hosted container. Internal hosted spans need a separate
+telemetry connection. Remove the temporary Helm release after recording its
+Job result and trace; the Foundry version remains.
