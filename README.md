@@ -70,8 +70,9 @@ with `helm upgrade --install --wait --wait-for-jobs`. The chart runs the
 shared release command inside AKS, where the Foundry project endpoint is
 private. The Job's image contains `smoke/sre.json`; the test deliberately
 provides no diagnostic evidence, so its answer must be reviewed for honest
-uncertainty. Retry with the same digest/revision reuses the version. A different
-revision is blocked until a reviewed promotion workflow exists.
+uncertainty. If the Job fails, uninstall this short-lived Helm release and run
+the same command again; the same digest/revision reuses the Foundry version.
+A different revision is blocked until a reviewed promotion workflow exists.
 
 From the workspace root, with the two values copied from the main CI summary:
 
