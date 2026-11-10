@@ -3,11 +3,8 @@
 agent:
   id: sre
 
-target:
-  workload: web
-
 # Overlay this file with fix/preview-environments.yaml. The operator supplies
-# the target namespace, source branch, immutable image and active agent version.
+# the target namespace/workload, source branch, immutable image and active agent version.
 handoff:
   enabled: true
   publish: true
