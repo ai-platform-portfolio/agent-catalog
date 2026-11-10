@@ -17,6 +17,8 @@ RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r requ
 
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
+COPY --from=alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9 /usr/bin/helm /usr/local/bin/helm
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONNOUSERSITE=1 \

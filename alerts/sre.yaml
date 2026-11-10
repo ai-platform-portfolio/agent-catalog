@@ -3,5 +3,10 @@
 agent:
   id: sre
 
-target:
-  workload: web
+# Overlay this file with fix/preview-environments.yaml. The operator supplies
+# the target namespace/workload, source branch, immutable image and active agent version.
+handoff:
+  enabled: true
+  publish: true
+  requiredEvidence: [workload_state, recent_events]
+  requireDegradedWorkload: true

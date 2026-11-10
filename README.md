@@ -15,11 +15,20 @@ policy is source intent; it does not itself trigger a Job or grant GitHub write
 access. Review the generated diff and PR checks before deciding whether the
 fix addresses the incident.
 
+`alerts/sre.yaml` enables the optional alert-to-coding handoff and requires
+`workload_state` and `recent_events` for an actionable triage result. Render it
+with `fix/preview-environments.yaml` so supervised and event-driven runs share
+one repository/edit/check policy. The operator supplies target namespace/workload,
+declared source branch, immutable image/revision, active Foundry version and
+existing GitHub App metadata. The handoff can publish only a draft PR after
+validation; it never merges. This is catalog intent, not evidence that a
+persistent alert registration or live automatic draft PR is deployed.
+
 The installed Argo Events bus can trigger scoped, read-only investigations of
 Kubernetes readiness failures. The reusable
 [`alert-chart`](https://github.com/ai-platform-portfolio/application-library/tree/main/agent-factory/alert-chart)
 owns the EventSource, Sensor, Job and RBAC; `alerts/sre.yaml` supplies only SRE
-intent. Deploy it with a concrete target namespace, digest-pinned catalog image,
+intent. Deploy it with a concrete target namespace/workload, digest-pinned catalog image,
 full source revision and active Foundry version. An Event UID deduplicates repeat
 updates while its Job exists (24 hours); the Sensor admits at most two events per
 minute. The model receives fixed incident text and current read-only evidence,

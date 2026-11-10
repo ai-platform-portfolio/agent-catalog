@@ -65,7 +65,7 @@ opentelemetry-semantic-conventions==0.66b2
 opentelemetry-util-genai==0.3b0
 opentelemetry-util-http==0.66b2
 packaging==26.3
-portfolio-agent-factory @ git+https://github.com/ai-platform-portfolio/application-library.git@985e714d6070a89ea822d7b10bfa112ba88d73fd#subdirectory=agent-factory
+portfolio-agent-factory @ git+https://github.com/ai-platform-portfolio/application-library.git@087b49b9734f4a8a7ea97658e338455b0f02fd2b#subdirectory=agent-factory
 priority==2.0.0
 propcache==0.5.4
 protobuf==7.36.2
