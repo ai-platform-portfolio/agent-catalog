@@ -33,7 +33,7 @@ tool_fixtures:
       containers:
         - name: api
           image: portfolio/preview-backend@sha256:15a06f12245edde638fcfea717692415bff1a3e5fd943a7e7d1ac3f330f5878f
-          readiness_http_get: {path: /api/missing-readyz, port: 8000}
+          readiness_http_get: {path: /api/missing-readyz, port: http}
     pods:
       - {name: api-5865877c68-454tp, phase: Running, restarts: 0, waiting: []}
     truncated: false
