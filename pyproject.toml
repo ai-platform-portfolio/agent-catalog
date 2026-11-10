@@ -3,7 +3,7 @@ name = "portfolio-agent-runtime"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "portfolio-agent-factory @ git+https://github.com/ai-platform-portfolio/application-library.git@9f8bd1092fc9b8b760f2366cfa9350aa96d6f46a#subdirectory=agent-factory",
+  "portfolio-agent-factory @ git+https://github.com/ai-platform-portfolio/application-library.git@985e714d6070a89ea822d7b10bfa112ba88d73fd#subdirectory=agent-factory",
   "opentelemetry-sdk>=1.30,<2",
   "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
   "PyYAML>=6,<7",
