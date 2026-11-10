@@ -6,6 +6,18 @@ The reusable manifest, Foundry publisher, model route and protocol host live in
 The catalog pins that package to a full Git commit; it does not copy its code.
 `agents/sre.yaml` is the first consumer.
 
+The installed Argo Events bus can trigger scoped, read-only investigations of
+Kubernetes readiness failures. The reusable
+[`alert-chart`](https://github.com/ai-platform-portfolio/application-library/tree/main/agent-factory/alert-chart)
+owns the EventSource, Sensor, Job and RBAC; `alerts/sre.yaml` supplies only SRE
+intent. Deploy it with a concrete target namespace, digest-pinned catalog image,
+full source revision and active Foundry version. An Event UID deduplicates repeat
+updates while its Job exists (24 hours); the Sensor admits at most two events per
+minute. The model receives fixed incident text and current read-only evidence,
+never Event message content. This watches Kubernetes readiness Events, not Mimir
+Alertmanager; other alert sources remain separate integrations. Chart rendering
+alone does not prove that the EventSource, Sensor and broker work live.
+
 ## Add an agent
 
 Add `agents/<id>.yaml`, an importable handler in `agent_runtime/`, a versioned

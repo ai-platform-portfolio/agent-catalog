@@ -1,0 +1,7 @@
+# Agent-specific intent. The release supplies the namespace, immutable image,
+# source revision and concrete Foundry version after publication.
+agent:
+  id: sre
+
+target:
+  workload: web
