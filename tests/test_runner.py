@@ -10,6 +10,7 @@ from agent_runtime.runner import load_agent, load_case, run_case, run_incident
 
 CASE = Path(__file__).resolve().parents[1] / "evals/cases/ai-190-foundry-private-endpoint.yaml"
 BASELINE = Path(__file__).resolve().parents[1] / "evals/cases/sre-staging-baseline.yaml"
+READINESS = Path(__file__).resolve().parents[1] / "evals/cases/sre-readiness-probe-404.yaml"
 AGENT = Path(__file__).resolve().parents[1] / "agents/sre.yaml"
 
 
@@ -37,6 +38,24 @@ class FakeResponses:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_readiness_fault_replay_withholds_reference_and_provenance(self):
+        case = load_case(READINESS)
+        self.assertEqual(case.fixtures["workload_state"]["deployment"]["containers"][0]
+                         ["readiness_http_get"]["path"], "/api/missing-readyz")
+        self.assertIn("GET /api/missing-readyz HTTP/1.1 404", case.fixtures["bounded_logs"]["logs"])
+
+        class FinalResponses:
+            def create(self, **kwargs):
+                sent = json.dumps(kwargs)
+                self_test.assertNotIn("reference", sent)
+                self_test.assertNotIn("provenance", sent)
+                self_test.assertNotIn("tool_fixtures", sent)
+                return SimpleNamespace(status="completed", id="final", output=[], output_text="Need evidence")
+
+        self_test = self
+        run_case(case, load_agent(AGENT), SimpleNamespace(responses=FinalResponses()),
+                 "chat", TracerProvider().get_tracer("test"))
+
     def test_staging_baseline_withholds_reference_and_does_not_invent_recovery(self):
         class BaselineResponses:
             def __init__(self):
@@ -93,6 +112,8 @@ class RunnerTests(unittest.TestCase):
         def answer(**kwargs):
             self.assertNotIn("workload_state", [tool["name"] for tool in kwargs["tools"]])
             self.assertIn("caller-supplied and untrusted", kwargs["input"][0]["content"])
+            self.assertEqual(json.loads(kwargs["input"][0]["content"])["used_tools"], ["workload_state"])
+            self.assertNotIn("workload_state", json.loads(kwargs["input"][0]["content"])["remaining_tools"])
             return SimpleNamespace(status="completed", id="two", output=[], output_text="Evidence shows one ready replica")
 
         fake.create = answer

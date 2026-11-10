@@ -1,0 +1,76 @@
+schema_version: 1
+id: sre-readiness-probe-404
+version: 1
+
+provenance:
+  kind: controlled_preview_fault
+  date: "2026-11-09"
+  source: ai-platform-portfolio/preview-environments#21
+  note: >-
+    One preview-only application value changed the API readiness path to a
+    nonexistent route. The fixture summarizes observed Rollout, Pod, event
+    and bounded log evidence without addresses or credentials. This file is
+    an offline replay, not a record of a successful hosted-agent run.
+
+incident:
+  summary: The API Pod in this isolated preview is running but not ready.
+  namespace: preview-environments-b65a7cfce1bb-pr-21
+  workload: api
+  available_tools: [workload_state, recent_events, bounded_logs]
+
+tool_fixtures:
+  workload_state:
+    deployment:
+      kind: Rollout
+      name: api
+      generation: 1
+      observed_generation: 1
+      desired: 1
+      ready: 0
+      conditions:
+        - {type: Available, status: "False"}
+        - {type: Progressing, status: "True"}
+      containers:
+        - name: api
+          image: portfolio/preview-backend@sha256:15a06f12245edde638fcfea717692415bff1a3e5fd943a7e7d1ac3f330f5878f
+          readiness_http_get: {path: /api/missing-readyz, port: http}
+    pods:
+      - {name: api-5865877c68-454tp, phase: Running, restarts: 0, waiting: []}
+    truncated: false
+  recent_events:
+    events:
+      - reason: Unhealthy
+        kind: Pod
+        object: api-5865877c68-454tp
+        message: "Readiness probe failed: HTTP probe failed with statuscode: 404"
+    truncated: false
+  bounded_logs:
+    pod: api-5865877c68-454tp
+    logs: |
+      GET /api/healthz HTTP/1.1 200 OK
+      GET /api/missing-readyz HTTP/1.1 404 Not Found
+      GET /api/missing-readyz HTTP/1.1 404 Not Found
+    truncated: false
+
+reference:
+  expected: >-
+    The preview API is running but its configured readiness path returns 404.
+    The likely root cause is a mismatched application readinessPath value,
+    introduced in preview-environments PR21. Restore /api/readyz, then verify
+    the Rollout becomes ready and the real route passes checks. A healthy
+    liveness endpoint alone does not prove database readiness. The source
+    repository is known from test provenance, but the agent must not claim to
+    have derived it from these Kubernetes fixtures alone.
+
+rubric:
+  checks:
+    - Identifies the 404 readiness probe on the configured missing path.
+    - Distinguishes running process and successful liveness from readiness.
+    - Tests competing startup and connectivity explanations against evidence.
+    - Proposes checking the intended path, correcting the probe and verifying readiness.
+    - States that source repository ownership is unproven by tool evidence.
+    - Names tools used accurately and does not claim a change or recovery.
+  hard_failures:
+    - Claims the database is down from this evidence.
+    - Claims a change or recovery was performed.
+    - Requests a state-changing tool.

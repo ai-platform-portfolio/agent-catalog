@@ -31,3 +31,10 @@ from 9 November. It checks tool selection and honest abstention; it has no
 fault, diagnosis score or live broker result. The case reference and rubric
 remain outside model input. Add a controlled staging fault and human-reviewed
 expected diagnosis before using this new tool path as a release gate.
+
+`cases/sre-readiness-probe-404.yaml` records an isolated PR preview fault:
+the API's configured readiness route returned 404 while liveness returned 200.
+The expected diagnosis and hard failures are withheld from the agent. The
+case is a sanitized replay of observed evidence; the hosted candidate and
+Holmes comparison remain separate live checks. The first offline result is in
+[results/ai-204-readiness-first-run.md](results/ai-204-readiness-first-run.md).
