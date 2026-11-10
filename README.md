@@ -87,10 +87,11 @@ default to the Foundry project with Entra tokens for
 `MODEL_TOKEN_SCOPE` release settings support a later authenticated gateway
 without changing the SRE handler.
 
-The first library and catalog PRs delivered code and CI, followed by a private
-publisher and live acceptance step. The read-only broker is a separate release
-candidate; alert intake, PostgreSQL retrieval, coding workspaces and fix PRs
-remain later work.
+The shared factory now contains the read-only broker, Kubernetes readiness
+alert intake, gated coding handoff and isolated draft-PR worker. The SRE
+catalog supplies their agent-specific intent. The unattended chain still
+requires live fault-to-draft acceptance; PostgreSQL retrieval remains future
+work.
 
 Offline case replay now comes from the pinned `application-library/agent-factory`
 package. This repository supplies SRE cases and the hosted handler; its CI
@@ -112,9 +113,13 @@ incident targeting another namespace and never sends its Kubernetes token to
 Foundry. The hosted response labels tool evidence as caller-supplied and
 untrusted; no diagnosis or recovery is implied by this baseline alone.
 
-The current production endpoint serves version 1. Test a new image as a
-candidate-specific Foundry version before routing production traffic to it;
-the first-release command intentionally refuses an implicit revision change.
+The current SRE hosted agent has version 1. After a rebuild, its ordinary
+endpoint may still select `@latest`; use the shared publisher chart's reviewed
+`pin` mode to fix that route to version 1 before publishing a candidate.
+The pin targets version 1's existing image digest and source revision while
+the publisher runs from the latest catalog image. Then test the new image as
+a candidate-specific Foundry version. The first-release command intentionally
+refuses an implicit revision change.
 
 ## First live release
 
