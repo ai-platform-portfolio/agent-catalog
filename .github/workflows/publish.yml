@@ -32,6 +32,7 @@ jobs:
       - run: python -m unittest discover -s tests -v
 
       - run: python -m portfolio_agent_factory validate
+      - run: python -m portfolio_agent_factory validate-evals
 
       - run: python -m json.tool smoke/sre.json > /dev/null
       - run: for file in incidents/*.json; do python -m json.tool "$file" > /dev/null; done

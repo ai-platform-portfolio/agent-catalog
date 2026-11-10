@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 from opentelemetry.sdk.trace import TracerProvider
 
-from agent_runtime.runner import load_agent, load_case, run_case, run_incident
+from agent_runtime.runner import run_incident
+from portfolio_agent_factory.evaluation import load_case, run_case
+from portfolio_agent_factory.manifest import load_agent
 
 
 CASE = Path(__file__).resolve().parents[1] / "evals/cases/ai-190-foundry-private-endpoint.yaml"
@@ -72,6 +74,7 @@ class RunnerTests(unittest.TestCase):
                           "chat", TracerProvider().get_tracer("test"))
         self.assertEqual(result["tool_calls"], ["workload_state"])
         self.assertIn("no outage", result["answer"])
+        self.assertEqual(result["evaluation"]["status"], "human_review_required")
         self.assertNotIn("reference", json.dumps(fake.requests))
         self.assertNotIn("rubric", json.dumps(fake.requests))
 
