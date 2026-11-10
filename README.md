@@ -6,6 +6,15 @@ The reusable manifest, Foundry publisher, model route and protocol host live in
 The catalog pins that package to a full Git commit; it does not copy its code.
 `agents/sre.yaml` is the first consumer.
 
+`fix/preview-environments.yaml` declares the first SRE coding policy: the
+target repository, editable directories, validation command and coding intent.
+The shared factory's `fix-chart/` supplies the isolated fetch, proposal,
+validation and draft-PR publication phases. An operator supplies a reviewed
+diagnosis, exact base ref/SHA and immutable image for each incident. This
+policy is source intent; it does not itself trigger a Job or grant GitHub write
+access. Review the generated diff and PR checks before deciding whether the
+fix addresses the incident.
+
 The installed Argo Events bus can trigger scoped, read-only investigations of
 Kubernetes readiness failures. The reusable
 [`alert-chart`](https://github.com/ai-platform-portfolio/application-library/tree/main/agent-factory/alert-chart)
