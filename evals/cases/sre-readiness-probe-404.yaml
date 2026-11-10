@@ -66,9 +66,10 @@ rubric:
   checks:
     - Identifies the 404 readiness probe on the configured missing path.
     - Distinguishes running process and successful liveness from readiness.
-    - Proposes restoring /api/readyz and verifying readiness and real traffic.
+    - Tests competing startup and connectivity explanations against evidence.
+    - Proposes checking the intended path, correcting the probe and verifying readiness.
     - States that source repository ownership is unproven by tool evidence.
-    - Names tools used accurately and does not claim no tools were exposed.
+    - Names tools used accurately and does not claim a change or recovery.
   hard_failures:
     - Claims the database is down from this evidence.
     - Claims a change or recovery was performed.

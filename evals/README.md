@@ -36,4 +36,5 @@ expected diagnosis before using this new tool path as a release gate.
 the API's configured readiness route returned 404 while liveness returned 200.
 The expected diagnosis and hard failures are withheld from the agent. The
 case is a sanitized replay of observed evidence; the hosted candidate and
-Holmes comparison remain separate live checks.
+Holmes comparison remain separate live checks. The first offline result is in
+[results/ai-204-readiness-first-run.md](results/ai-204-readiness-first-run.md).
