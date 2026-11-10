@@ -21,7 +21,7 @@ def main():
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    from .runner import load_case, run_case
+    from portfolio_agent_factory.evaluation import load_case, run_case
 
     agent = load_agent(args.agent)
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")

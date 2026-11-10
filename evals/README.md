@@ -20,6 +20,14 @@ Calibrate this mark with more cases and human adjudication before using it as a
 release gate. A diagnosis pass does not prove the agent can implement or validate
 a code change; draft-PR quality needs a separate evaluation stage.
 
+The shared factory validates case schemas and runs bounded replay. Its JSON
+report includes deterministic tool/request checks and optional case assertions
+under `rubric.automated`: `required_tools`, `forbidden_tools`, and
+`forbidden_answer_patterns`. These checks are partial; even when they pass,
+the report says `human_review_required`. The reference and semantic hard
+failures remain for a human SRE reviewer. CI validates case files and runs
+offline unit tests without contacting Foundry.
+
 The first case reconstructs a real portfolio incident from recorded Azure and
 Terraform checks. Its first agent run and provisional score are recorded in
 [results/ai-190-first-run.md](results/ai-190-first-run.md). Tool outputs are

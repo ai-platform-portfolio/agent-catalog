@@ -62,6 +62,12 @@ publisher and live acceptance step. The read-only broker is a separate release
 candidate; alert intake, PostgreSQL retrieval, coding workspaces and fix PRs
 remain later work.
 
+Offline case replay now comes from the pinned `application-library/agent-factory`
+package. This repository supplies SRE cases and the hosted handler; its CI
+validates every case and tests the shared replay contract without a live model
+call. A live replay emits a JSON report with deterministic checks and a pending
+human review. Passing those checks alone is not a release decision.
+
 ## Read-only AKS investigation
 
 `agents/sre.yaml` declares four fixed tools: workload state, recent events,

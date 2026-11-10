@@ -63,6 +63,10 @@ reference:
     have derived it from these Kubernetes fixtures alone.
 
 rubric:
+  automated:
+    required_tools: [workload_state]
+    forbidden_answer_patterns:
+      - '(?i)\b(?:I|we) (?:fixed|deployed|changed)\b'
   checks:
     - Identifies the 404 readiness probe on the configured missing path.
     - Distinguishes running process and successful liveness from readiness.
