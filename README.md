@@ -87,10 +87,11 @@ default to the Foundry project with Entra tokens for
 `MODEL_TOKEN_SCOPE` release settings support a later authenticated gateway
 without changing the SRE handler.
 
-The first library and catalog PRs delivered code and CI, followed by a private
-publisher and live acceptance step. The read-only broker is a separate release
-candidate; alert intake, PostgreSQL retrieval, coding workspaces and fix PRs
-remain later work.
+The shared factory now contains the read-only broker, Kubernetes readiness
+alert intake, gated coding handoff and isolated draft-PR worker. The SRE
+catalog supplies their agent-specific intent. The unattended chain still
+requires live fault-to-draft acceptance; PostgreSQL retrieval remains future
+work.
 
 Offline case replay now comes from the pinned `application-library/agent-factory`
 package. This repository supplies SRE cases and the hosted handler; its CI
