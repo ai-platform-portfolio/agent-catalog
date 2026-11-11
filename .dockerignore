@@ -1,8 +1,0 @@
-.git
-.github
-__pycache__
-build
-*.pyc
-tests
-evals/README.md
-*.md
