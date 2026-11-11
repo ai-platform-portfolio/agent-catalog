@@ -1,0 +1,159 @@
+name: Deploy catalog agents
+
+# TODO: Review whether this is the most efficient delivery approach, including
+# matrix/job overhead and whether the per-agent artifact handoff can be simpler.
+
+on:
+  pull_request:
+    paths: ['agents/**', '.github/workflows/deploy-agents.yml']
+  push:
+    branches: [main]
+    paths: ['agents/**', '.github/workflows/deploy-agents.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    outputs:
+      agents: ${{ steps.agents.outputs.agents }}
+      image-prefix: ${{ steps.agents.outputs.image-prefix }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Discover native agent projects
+        id: agents
+        shell: bash
+        run: |
+          agents='[]'
+          for directory in agents/*/; do
+            [[ -d "$directory" ]] || continue
+            agent=${directory%/}
+            agent=${agent##*/}
+            environment="${GITHUB_REPOSITORY#*/}-$agent"
+            [[ "$agent" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ && ${#environment} -le 63 &&
+               ! -L "${directory%/}" && -f "$directory/azure.yaml" && ! -L "$directory/azure.yaml" &&
+               -f "$directory/Dockerfile" && ! -L "$directory/Dockerfile" ]] || {
+              echo '::error::Each agent needs regular azure.yaml/Dockerfile files and a lowercase name; repository-name plus agent must fit 63 characters.'
+              exit 1
+            }
+            agents=$(jq -c --arg agent "$agent" '. + [$agent]' <<< "$agents")
+          done
+          echo "agents=$agents" >> "$GITHUB_OUTPUT"
+          echo "image-prefix=agents/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: discover
+    if: needs.discover.outputs.agents != '[]'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        agent: ${{ fromJSON(needs.discover.outputs.agents) }}
+
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@3f4a34eb8a154e505dfe19ad952ca818aca13a18
+    with:
+      image: ${{ needs.discover.outputs.image-prefix }}/${{ matrix.agent }}
+      context: agents/${{ matrix.agent }}
+      file: agents/${{ matrix.agent }}/Dockerfile
+      revision: ${{ github.event.pull_request.head.sha || github.sha }}
+      scan: true
+      artifact-name: image-${{ matrix.agent }}
+
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  deploy:
+    needs: [discover, build]
+    if: >-
+      needs.discover.outputs.agents != '[]' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        agent: ${{ fromJSON(needs.discover.outputs.agents) }}
+
+    concurrency:
+      group: foundry-${{ github.repository }}-${{ matrix.agent }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require current main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" && "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]] || {
+            echo '::error::Refusing deployment from a stale source revision.'
+            exit 1
+          }
+
+      - name: Download this agent's image record
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-${{ matrix.agent }}
+          path: ${{ runner.temp }}/agent-image
+
+      - name: Verify image record identity
+        id: image
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_PATH: ${{ needs.discover.outputs.image-prefix }}/${{ matrix.agent }}
+        run: |
+          record="$RUNNER_TEMP/agent-image/image.json"
+          jq -e --arg revision "$SOURCE_SHA" --arg repository "$GITHUB_REPOSITORY" --arg path "$IMAGE_PATH" '
+            .revision == $revision and .repository == $repository and
+            (.digest | test("^sha256:[0-9a-f]{64}$")) and
+            (.image | test("^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")) and
+            ((.image | sub("^[^/]+/"; "") | sub(":[^/:]+$"; "")) == $path)
+          ' "$record" > /dev/null
+          echo "image=$(jq -r '(.image | sub(":[^/:]+$"; "")) + "@" + .digest' "$record")" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy prebuilt digest with native azd
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@3f4a34eb8a154e505dfe19ad952ca818aca13a18
+        with:
+          service: ${{ matrix.agent }}
+          image: ${{ steps.image.outputs.image }}
+          environment: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          working-directory: agents/${{ matrix.agent }}
+          location: ${{ vars.AZURE_LOCATION }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+
+  linear:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/linear-issue-check.yml@eddfe0cc46d5a2d60cb9b576d635f1d33aa8d9dc
+    secrets:
+      LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
+      LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
