@@ -1,0 +1,84 @@
+name: Deploy catalog agents
+
+on:
+  pull_request:
+    paths: ['agents/**', '.github/workflows/deploy-agent*.yml']
+  push:
+    branches: [main]
+    paths: ['agents/**', '.github/workflows/deploy-agent*.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    outputs:
+      matrix: ${{ steps.agents.outputs.matrix }}
+      has-agents: ${{ steps.agents.outputs.has-agents }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Discover agent directories
+        id: agents
+        shell: bash
+        run: |
+          entries='[]'
+          for directory in agents/*/; do
+            [[ -d "$directory" ]] || continue
+            agent=${directory%/}
+            agent=${agent##*/}
+            [[ ! -L "${directory%/}" && "$agent" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || {
+              echo '::error::Agent directories must be nonsymlink lowercase names, up to 63 characters.'
+              exit 1
+            }
+            for file in Dockerfile deployment.json smoke.json; do
+              [[ -f "$directory$file" && ! -L "$directory$file" ]] || {
+                echo "::error::$directory requires a regular $file."
+                exit 1
+              }
+            done
+            entries=$(jq -c --arg agent "$agent" --arg repository "$GITHUB_REPOSITORY" \
+              '. + [{agent: $agent, image: ("agents/" + ($repository | ascii_downcase) + "/" + $agent)}]' <<< "$entries")
+          done
+
+          echo "matrix=$(jq -cn --argjson include "$entries" '{include: $include}')" >> "$GITHUB_OUTPUT"
+          echo "has-agents=$(jq 'length > 0' <<< "$entries")" >> "$GITHUB_OUTPUT"
+
+  agents:
+    needs: discover
+    if: needs.discover.outputs.has-agents == 'true'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+
+    uses: ./.github/workflows/deploy-agent.yml
+    with:
+      agent: ${{ matrix.agent }}
+      image: ${{ matrix.image }}
+      revision: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  linear:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/linear-issue-check.yml@eddfe0cc46d5a2d60cb9b576d635f1d33aa8d9dc
+    secrets:
+      LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
+      LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
