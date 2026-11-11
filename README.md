@@ -2,8 +2,9 @@
 
 Agent source and native Microsoft Foundry deployment configuration. One GitHub
 workflow discovers agent projects and calls the shared Foundry action for each.
-Azure Developer CLI (`azd`) owns packaging, building and deployment; this path has
-no separate Docker workflow, custom publisher, Helm, Argo or AKS dependency.
+The shared Docker workflow builds/pushes each image to the existing ACR and scans
+its digest. The native Foundry action then deploys that same digest through `azd`.
+There is no wrapper workflow, custom publisher, Helm, Argo or AKS dependency.
 
 The catalog is currently empty. The retired SRE runtime, diagnostic broker and
 coding workers remain archived in
@@ -11,12 +12,13 @@ coding workers remain archived in
 
 ## Add an agent
 
-Add `agents/<name>/azure.yaml` alongside the agent source and dependency files.
+Add `agents/<name>/azure.yaml` and a Dockerfile alongside the agent source and
+dependency files.
 Names use lowercase letters, digits and hyphens; repository name plus agent name
 must fit 63 characters. Use the directory name as the native agent service key.
 New directories are discovered automatically; no workflow edit is needed.
 
-For example, a `researcher` source-code project could declare:
+For example, a `researcher` container project could declare:
 
 ```yaml
 name: researcher
@@ -32,10 +34,10 @@ services:
     kind: hosted
     name: ${AZURE_ENV_NAME}
     project: .
-    codeConfiguration:
-      runtime: python_3_13
-      entryPoint: main.py
-      dependencyResolution: remote_build
+    language: docker
+    image: ${HOSTED_AGENT_IMAGE}
+    docker:
+      remoteBuild: true
     protocols:
       - protocol: responses
         version: 2.0.0
@@ -43,32 +45,50 @@ services:
       PYTHONNOUSERSITE: "1"
 ```
 
-Your source must implement the selected Foundry protocol. Configure its model,
-resources and tools through native `azure.yaml` and application code. For container
-packaging, use native Docker configuration and a Dockerfile instead of
-`codeConfiguration`; a prebuilt digest-pinned `image` is also supported. No custom
-`deployment.json` or `smoke.json` contract is required by this workflow.
+The Dockerfile must serve the selected Foundry protocol and should use a hardened,
+pinned base with locked application dependencies and appropriate application test
+steps. Configure the model, resources and tools through native `azure.yaml` and
+code. `HOSTED_AGENT_IMAGE` comes from the verified build record. The shared action
+sets `AZD_AGENT_SKIP_ACR=true`; `docker.remoteBuild: true` makes the core package
+phase a no-op, and the extension consumes the prebuilt image without an ACR build.
+Do not use `codeConfiguration` on this prebuilt-container path. No custom
+`deployment.json` or `smoke.json` contract is required.
 
 ## Delivery
 
 ```mermaid
 flowchart LR
-    Discover[Discover agent directories] --> Matrix[Matrix per agent]
-    Matrix --> Action[Shared Foundry action]
-    Action --> CLI[Native azd packaging and deployment]
-    CLI --> Foundry[Foundry hosted agent]
+    Discover[Discover agent directories] --> Build[Shared Docker build matrix]
+    Build --> ACR[Existing ACR]
+    ACR --> Scan[Trivy scan by digest]
+    Scan --> Record[Per-agent image record]
+    Record --> Deploy[Native Foundry deploy matrix]
+    Deploy --> Foundry[Foundry hosted agent]
 ```
 
-PRs run discovery and the issue check without Azure login or deployment. Current
-main pushes and manual main runs deploy up to four agents concurrently. Each
-agent is serialized, checked out at the exact run revision, and checked against
-current main before the action. An empty catalog skips the matrix.
+PRs discover and build agents without publishing or Azure login. Main pushes and
+manual main runs publish images, scan each immutable digest and release an
+`image-<agent>` record only after success. HIGH or CRITICAL vulnerabilities fail
+the build job. The push precedes scanning: a rejected image remains in ACR but is
+not released to Foundry by this workflow. All builds must succeed before the
+batch deploys. Application-specific tests belong in each build or an explicit
+caller job; image signing is not implemented here.
 
-The action is pinned to merged ops-shared PR14. It reuses an installed `azd` or
-installs it when missing, ensures the Foundry agent extension, uses GitHub OIDC,
-and prepares local azd context. Environment names derive from repository and
-agent; use `${AZURE_ENV_NAME}` for the native hosted-agent name to preserve that
-isolation. `.azure/` directories are ignored, including those under agent projects.
+Both shared blocks remain scalar. The caller owns the build/deploy matrices,
+source checks and concurrency. Each deployment downloads its agent's record from
+the same workflow run and verifies repository, revision, image path and digest.
+It never consumes a last-writer matrix output as a digest map. Artifact overwrite
+supports build reruns; rerunning only deployment can reuse the successful build
+record while GitHub retains it. Missing records fail rather than falling back to
+a mutable tag. Up to four agents run per stage; each agent's deployment is
+serialized. A stale checkout/main revision fails before Azure login.
+
+The native Foundry action reuses installed `azd` or installs it when missing,
+ensures the extension, uses GitHub OIDC and prepares local context. Its image input
+is always `registry/path@sha256:...` from the build record; no second build is
+requested. Native environment names derive from repository and agent; use
+`${AZURE_ENV_NAME}` as the hosted-agent name. `.azure/` directories are ignored.
+An empty catalog safely skips both matrices.
 
 Set repository variables `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_LOCATION` to the
 operator-provided existing project endpoint and Azure region. The existing
@@ -85,10 +105,10 @@ tests, evaluation, promotion, rollback and deletion are not automated here.
 Removing a directory does not delete its hosted agent. Coordinate external writers;
 GitHub concurrency is not a cloud-wide deployment lock.
 
-With no agents, validation proves discovery and safe skipping only. Native package
-compatibility, identity mapping, image/model access and hosted execution remain
-first-agent acceptance gates; this PR does not deploy an agent or restore the
-retired image-pull role.
+With no agents, validation proves discovery, handoff checks and safe skipping.
+Actual builds/scans, identity mapping, image/model access and hosted execution
+remain first-agent acceptance gates. This PR does not deploy an agent, sign an
+image, assert application test coverage or restore the retired image-pull role.
 
 References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
 [native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
