@@ -1,5 +1,8 @@
 name: Deploy catalog agents
 
+# TODO: Review whether this is the most efficient delivery approach, including
+# matrix/job overhead and whether the per-agent artifact handoff can be simpler.
+
 on:
   pull_request:
     paths: ['agents/**', '.github/workflows/deploy-agents.yml']

@@ -56,6 +56,10 @@ Do not use `codeConfiguration` on this prebuilt-container path. No custom
 
 ## Delivery
 
+**Follow-up:** Review whether `.github/workflows/deploy-agents.yml` is the most
+efficient delivery approach, including matrix/job overhead and opportunities to
+simplify the per-agent artifact handoff.
+
 ```mermaid
 flowchart LR
     Discover[Discover agent directories] --> Build[Shared Docker build matrix]
