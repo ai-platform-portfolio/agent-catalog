@@ -1,8 +1,0 @@
-{
-  "incident": {
-    "service": "portfolio-application",
-    "environment": "staging",
-    "symptom": "Elevated HTTP 5xx responses",
-    "observation": "No logs, metrics, events, or deployment history are attached to this smoke request."
-  }
-}
