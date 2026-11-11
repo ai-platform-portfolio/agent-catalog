@@ -59,7 +59,7 @@ jobs:
       contents: read
       id-token: write
 
-    uses: ai-platform-portfolio/ops-shared/.github/workflows/foundry-deploy.yml@fe6cde45cbd7710a448616b7469262e2b907045d
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/foundry-deploy.yml@83d3982c4615a28a15130c0481947945c4952aad
     with:
       agent: ${{ inputs.agent }}
       image: ${{ needs.build.outputs.image }}

@@ -68,7 +68,9 @@ PRs build without publishing and validate deployment/smoke configuration without
 Azure login. Current main pushes and manual main runs publish and deploy. Each
 agent's thin workflow passes its own Docker image, digest and source revision to
 deployment; matrix outputs are not combined into a single shared digest. Up to
-four agents run in parallel, while each agent's lifecycle is serialized. A stale
+four agents run in parallel, while each agent's lifecycle is serialized. Both
+shared templates remain flat, handling one image or agent per call; discovery,
+iteration, dependencies and concurrency belong to this repository. A stale
 main revision fails before Azure login.
 
 Image repositories derive from this repository and agent directory. Foundry names
