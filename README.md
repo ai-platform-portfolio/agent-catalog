@@ -1,113 +1,95 @@
 # Agent catalog
 
-Agent source and minimal deployment intent for Microsoft Foundry hosted agents.
-GitHub Actions builds containers in ACR and deploys them directly to Foundry.
-The delivery path has no dependency on AKS, Helm or Argo.
+Agent source and native Microsoft Foundry deployment configuration. One GitHub
+workflow discovers agent projects and calls the shared Foundry action for each.
+Azure Developer CLI (`azd`) owns packaging, building and deployment; this path has
+no separate Docker workflow, custom publisher, Helm, Argo or AKS dependency.
 
-The catalog is currently empty. These workflows do not restore the retired SRE
-runtime, diagnostic broker or coding workers. Their historical source remains in
+The catalog is currently empty. The retired SRE runtime, diagnostic broker and
+coding workers remain archived in
 [sre-agent-foundry/agent-catalog](https://github.com/sre-agent-foundry/agent-catalog).
 
 ## Add an agent
 
-Add a directory under `agents/` with a unique lowercase name (letters, digits and
-hyphens, up to 63 characters). Each directory contains:
+Add `agents/<name>/azure.yaml` alongside the agent source and dependency files.
+Names use lowercase letters, digits and hyphens; repository name plus agent name
+must fit 63 characters. Use the directory name as the native agent service key.
+New directories are discovered automatically; no workflow edit is needed.
 
-```text
-agents/<name>/
-  Dockerfile
-  deployment.json
-  smoke.json
-  ...agent source and dependencies...
+For example, a `researcher` source-code project could declare:
+
+```yaml
+name: researcher
+
+services:
+  foundry:
+    host: azure.ai.project
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
+
+  researcher:
+    host: azure.ai.agent
+    uses: [foundry]
+    kind: hosted
+    name: ${AZURE_ENV_NAME}
+    project: .
+    codeConfiguration:
+      runtime: python_3_13
+      entryPoint: main.py
+      dependencyResolution: remote_build
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    env:
+      PYTHONNOUSERSITE: "1"
 ```
 
-No workflow or shared-repository edit is needed for another agent. Discovery is
-inline in `deploy-agents.yml`; an empty catalog skips the matrix. Malformed agent
-directories fail discovery rather than silently being skipped. The Docker build
-context is the agent directory and its image must implement the selected Foundry
-protocol on port 8088 using a supported hosting library.
+Your source must implement the selected Foundry protocol. Configure its model,
+resources and tools through native `azure.yaml` and application code. For container
+packaging, use native Docker configuration and a Dockerfile instead of
+`codeConfiguration`; a prebuilt digest-pinned `image` is also supported. No custom
+`deployment.json` or `smoke.json` contract is required by this workflow.
 
-Minimal `deployment.json`:
-
-```json
-{"model_deployment": "chat"}
-```
-
-The shared deployment workflow defaults to one CPU, 2Gi memory and Invocations
-protocol 2.0.0. Optional fields are `protocol` (`invocations` or `responses`),
-`cpu`, `memory` and string-valued `environment_variables`. The workflow injects
-`MODEL_DEPLOYMENT_NAME`, `FOUNDRY_PROJECT_ENDPOINT` and `PYTHONNOUSERSITE=1`.
-Keep credentials out of these files and the image; use Entra identity and Foundry
-project connections for required secret references.
-
-`smoke.json` supplies a small request and nonempty expected response fields:
-
-```json
-{"request": {"message": "health"}, "expect": {"status": "ok"}}
-```
-
-Choose expectations your agent actually implements. Nested expected objects are
-matched as subsets; arrays and scalar values must match exactly. Responses agents
-also need `status: completed`; their request usually contains `input`. Smoke
-responses are checked without being printed to workflow logs.
-
-## Delivery and release boundaries
+## Delivery
 
 ```mermaid
 flowchart LR
-    Discover[Discover agent directories] --> Matrix[One workflow invocation per agent]
-    Matrix --> Docker[Shared Docker workflow]
-    Docker --> ACR[Azure Container Registry]
-    Docker --> Deploy[Shared Foundry deployment workflow]
-    ACR --> Foundry[Foundry hosted agent]
-    Deploy --> Foundry
-    Foundry --> Smoke[Version-specific smoke session]
+    Discover[Discover agent directories] --> Matrix[Matrix per agent]
+    Matrix --> Action[Shared Foundry action]
+    Action --> CLI[Native azd packaging and deployment]
+    CLI --> Foundry[Foundry hosted agent]
 ```
 
-PRs build without publishing and validate deployment/smoke configuration without
-Azure login. Current main pushes and manual main runs publish and deploy. Each
-agent's thin workflow passes its own Docker image, digest and source revision to
-deployment; matrix outputs are not combined into a single shared digest. Up to
-four agents run in parallel, while each agent's lifecycle is serialized. Both
-shared templates remain flat, handling one image or agent per call; discovery,
-iteration, dependencies and concurrency belong to this repository. A stale
-main revision fails before Azure login.
+PRs run discovery and the issue check without Azure login or deployment. Current
+main pushes and manual main runs deploy up to four agents concurrently. Each
+agent is serialized, checked out at the exact run revision, and checked against
+current main before the action. An empty catalog skips the matrix.
 
-Image repositories derive from this repository and agent directory. Foundry names
-derive from the agent name plus a stable hash of owner/repository and agent, so
-another repository or agent does not reuse the same identity. Retries reuse the
-exact source/image/configuration version; conflicting artifacts for one revision
-fail. Unchanged agents can reuse cached image layers, but a new source revision
-creates a new Foundry version even if its image digest is unchanged.
+The action is pinned to merged ops-shared PR14. It reuses an installed `azd` or
+installs it when missing, ensures the Foundry agent extension, uses GitHub OIDC,
+and prepares local azd context. Environment names derive from repository and
+agent; use `${AZURE_ENV_NAME}` for the native hosted-agent name to preserve that
+isolation. `.azure/` directories are ignored, including those under agent projects.
 
-The first successfully tested version is pinned as the serving version. Later
-deployments require a pinned serving route, test the candidate in its own session
-and leave ordinary traffic unchanged. Smoke sessions are stopped in cleanup;
-session-record retention is managed by Foundry. Promotion, rollback and agent
-deletion remain explicit operator operations, outside these workflows. Removing a
-directory does not delete its deployed agent. Coordinate other API writers: GitHub
-concurrency does not serialize portal or external deployments, and route readback
-is not an atomic compare-and-swap.
+Set repository variables `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_LOCATION` to the
+operator-provided existing project endpoint and Azure region. The existing
+organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+`AZURE_SUBSCRIPTION_ID` provide the federated identity contract. The current platform
+reuses `kubernetes-spn`; effective CI login and deployment still need live proof.
+Keep credentials and private configuration out of source and images.
 
-## Repository configuration and acceptance
+This workflow invokes deployment, not infrastructure provisioning. Native azd can
+configure agent identity/RBAC and applies endpoint settings from `azure.yaml`;
+its required permissions and image-pull access must be available. Pin the serving
+version before deploying a candidate and promote explicitly. Application smoke
+tests, evaluation, promotion, rollback and deletion are not automated here.
+Removing a directory does not delete its hosted agent. Coordinate external writers;
+GitHub concurrency is not a cloud-wide deployment lock.
 
-Set the repository variable `FOUNDRY_PROJECT_ENDPOINT` to the operator-provided
-project URL, for example
-`https://<account>.services.ai.azure.com/api/projects/<project>`. Shared workflows
-are pinned to immutable commits; merge [ops-shared PR13](https://github.com/ai-platform-portfolio/ops-shared/pull/13) before this caller.
+With no agents, validation proves discovery and safe skipping only. Native package
+compatibility, identity mapping, image/model access and hosted execution remain
+first-agent acceptance gates; this PR does not deploy an agent or restore the
+retired image-pull role.
 
-The existing organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
-`AZURE_SUBSCRIPTION_ID` supply native Azure OIDC login. Their referenced identity
-needs GitHub federation, ACR push access and Foundry deployment permissions. The
-current platform reuses `kubernetes-spn`; the publisher does not create identities
-or grant Azure roles. Foundry's image-pull identity separately needs access to ACR.
-The previously retired image-pull grant has not been restored by these PRs.
-
-With no agents, CI can prove discovery and a safe skipped matrix, not OIDC login,
-image pulling, model access or hosted execution. Those remain live acceptance gates
-when the first agent is added. No network, registry or role assignment changes are
-performed by these workflows.
-
-References: [Foundry deployment](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
-[release isolation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent),
-[GitHub matrix workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
+[native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
+[Foundry lifecycle](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent).

@@ -2,10 +2,10 @@ name: Deploy catalog agents
 
 on:
   pull_request:
-    paths: ['agents/**', '.github/workflows/deploy-agent*.yml']
+    paths: ['agents/**', '.github/workflows/deploy-agents.yml']
   push:
     branches: [main]
-    paths: ['agents/**', '.github/workflows/deploy-agent*.yml']
+    paths: ['agents/**', '.github/workflows/deploy-agents.yml']
   workflow_dispatch:
 
 permissions:
@@ -17,8 +17,7 @@ jobs:
     timeout-minutes: 5
 
     outputs:
-      matrix: ${{ steps.agents.outputs.matrix }}
-      has-agents: ${{ steps.agents.outputs.has-agents }}
+      agents: ${{ steps.agents.outputs.agents }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -26,35 +25,32 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Discover agent directories
+      - name: Discover native agent projects
         id: agents
         shell: bash
         run: |
-          entries='[]'
+          agents='[]'
           for directory in agents/*/; do
             [[ -d "$directory" ]] || continue
             agent=${directory%/}
             agent=${agent##*/}
-            [[ ! -L "${directory%/}" && "$agent" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || {
-              echo '::error::Agent directories must be nonsymlink lowercase names, up to 63 characters.'
+            environment="${GITHUB_REPOSITORY#*/}-$agent"
+            [[ "$agent" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ && ${#environment} -le 63 &&
+               ! -L "${directory%/}" && -f "$directory/azure.yaml" && ! -L "$directory/azure.yaml" ]] || {
+              echo '::error::Each agent needs a regular azure.yaml and a lowercase name; repository-name plus agent must fit 63 characters.'
               exit 1
             }
-            for file in Dockerfile deployment.json smoke.json; do
-              [[ -f "$directory$file" && ! -L "$directory$file" ]] || {
-                echo "::error::$directory requires a regular $file."
-                exit 1
-              }
-            done
-            entries=$(jq -c --arg agent "$agent" --arg repository "$GITHUB_REPOSITORY" \
-              '. + [{agent: $agent, image: ("agents/" + ($repository | ascii_downcase) + "/" + $agent)}]' <<< "$entries")
+            agents=$(jq -c --arg agent "$agent" '. + [$agent]' <<< "$agents")
           done
-
-          echo "matrix=$(jq -cn --argjson include "$entries" '{include: $include}')" >> "$GITHUB_OUTPUT"
-          echo "has-agents=$(jq 'length > 0' <<< "$entries")" >> "$GITHUB_OUTPUT"
+          echo "agents=$agents" >> "$GITHUB_OUTPUT"
 
   agents:
     needs: discover
-    if: needs.discover.outputs.has-agents == 'true'
+    if: >-
+      needs.discover.outputs.agents != '[]' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     permissions:
       contents: read
@@ -63,18 +59,41 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 4
-      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+      matrix:
+        agent: ${{ fromJSON(needs.discover.outputs.agents) }}
 
-    uses: ./.github/workflows/deploy-agent.yml
-    with:
-      agent: ${{ matrix.agent }}
-      image: ${{ matrix.image }}
-      revision: ${{ github.event.pull_request.head.sha || github.sha }}
+    concurrency:
+      group: foundry-${{ github.repository }}-${{ matrix.agent }}
+      cancel-in-progress: false
 
-    secrets:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require current main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" && "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]] || {
+            echo '::error::Refusing deployment from a stale source revision.'
+            exit 1
+          }
+
+      - name: Package and deploy agent with native azd
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@a4b8fc8659cb863ef458d4880af18e99a3c25c89
+        with:
+          service: ${{ matrix.agent }}
+          environment: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          working-directory: agents/${{ matrix.agent }}
+          location: ${{ vars.AZURE_LOCATION }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
 
   linear:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
