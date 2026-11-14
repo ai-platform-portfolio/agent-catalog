@@ -64,7 +64,7 @@ jobs:
       matrix:
         agent: ${{ fromJSON(needs.discover.outputs.agents) }}
 
-    uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@68fbf8bc892b7bca9e00c2f3e22ae03da1aaecdc
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@12e689fdd1d26fec21e80bf1c8adbfee1dd0b788
     with:
       image: ${{ needs.discover.outputs.image-prefix }}/${{ matrix.agent }}
       context: agents/${{ matrix.agent }}
