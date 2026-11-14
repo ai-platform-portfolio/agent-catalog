@@ -41,8 +41,8 @@ jobs:
             environment="${GITHUB_REPOSITORY#*/}-$agent"
             [[ "$agent" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ && ${#environment} -le 63 &&
                ! -L "${directory%/}" && -f "$directory/azure.yaml" && ! -L "$directory/azure.yaml" &&
-               -f "$directory/Dockerfile" && ! -L "$directory/Dockerfile" ]] || {
-              echo '::error::Each agent needs regular azure.yaml/Dockerfile files and a lowercase name; repository-name plus agent must fit 63 characters.'
+               ! -L "$directory/image" && -f "$directory/image/Dockerfile" && ! -L "$directory/image/Dockerfile" ]] || {
+              echo '::error::Each agent needs regular azure.yaml and image/Dockerfile files and a lowercase name; repository-name plus agent must fit 63 characters.'
               exit 1
             }
             agents=$(jq -c --arg agent "$agent" '. + [$agent]' <<< "$agents")
@@ -68,7 +68,7 @@ jobs:
     with:
       image: ${{ needs.discover.outputs.image-prefix }}/${{ matrix.agent }}
       context: agents/${{ matrix.agent }}
-      file: agents/${{ matrix.agent }}/Dockerfile
+      file: agents/${{ matrix.agent }}/image/Dockerfile
       revision: ${{ github.event.pull_request.head.sha || github.sha }}
       scan: true
       artifact-name: image-${{ matrix.agent }}

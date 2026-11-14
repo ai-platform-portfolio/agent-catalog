@@ -16,6 +16,8 @@ services:
     image: ${HOSTED_AGENT_IMAGE}
 
     docker:
+      path: image/Dockerfile
+      context: .
       remoteBuild: true
 
     protocols:

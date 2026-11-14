@@ -14,7 +14,8 @@ Local tests do not establish a successful hosted deployment or live AKS access.
 ```text
 agents/sre/
 ├── azure.yaml              Foundry deployment definition
-├── Dockerfile              Container build and startup
+├── image/
+│   └── Dockerfile          Container build and startup
 ├── requirements.txt        Pinned direct/transitive dependencies and hashes
 ├── config/
 │   └── agent.yaml          Instructions, model, budgets and response schema
@@ -63,7 +64,7 @@ flowchart LR
 | Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
 | Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
-| Image and dependencies | [Dockerfile](agents/sre/Dockerfile), [requirements.txt](agents/sre/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
+| Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [requirements.txt](agents/sre/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
 
 `azure.yaml` describes hosting. `config/agent.yaml` describes behaviour. `runtime/agent.py`
@@ -185,8 +186,12 @@ live-tool evaluation can be claimed. A live backend rejects caller-provided evid
 ## Build and delivery
 
 ```sh
-docker build --platform linux/amd64 -t foundry-agent-review agents/sre
+docker build --platform linux/amd64 -f agents/sre/image/Dockerfile \
+  -t foundry-agent-review agents/sre
 ```
+
+The build context remains `agents/sre/`; `.dockerignore` stays at that root.
+Both the workflow and native `azure.yaml` reference `image/Dockerfile`.
 
 The Docker build runs the same offline tests before producing the non-root runtime.
 The base is official Python 3.12 on Alpine 3.24, with a pinned upstream Kerberos
@@ -250,7 +255,7 @@ Keep the hosting/runtime boundaries; replace the example instructions, tool
 functions and case-specific result validation, then supply independent evaluation
 cases. A new agent directory must use its directory name as the `azure.yaml`
 service key, preserve `${AZURE_ENV_NAME}` for repository/agent identity, and provide
-its own Dockerfile and locked dependencies. The existing workflow discovers it.
+its own `image/Dockerfile` and pinned dependencies. The existing workflow discovers it.
 This PR deliberately keeps the pieces visible together; it does not claim the
 runtime has already been extracted into a centrally consumed library.
 
