@@ -9,6 +9,7 @@ from azure.identity import DefaultAzureCredential
 from starlette.responses import JSONResponse
 
 from runtime.agent import load_config, model_client, run
+from telemetry.tracing import configure, shutdown as shutdown_tracing
 from tools.diagnostics import KubernetesTools, ProvidedTools, live_clients, validate_diagnosis
 
 
@@ -43,6 +44,7 @@ def build_app(client=None, config=None, **host_options):
         raise ValueError('DIAGNOSTICS_BACKEND must be provided or kubernetes')
 
     os.environ.setdefault('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', 'false')
+    host_options.setdefault('configure_observability', configure)
     app = InvocationAgentServerHost(**host_options)
     # Bound concurrent model/tool work per container. Request histories stay local.
     slots = asyncio.Semaphore(2)
@@ -75,6 +77,7 @@ def build_app(client=None, config=None, **host_options):
                 live[1].close()
         if credential is not None:
             credential.close()
+        await asyncio.to_thread(shutdown_tracing)
 
     return app
 

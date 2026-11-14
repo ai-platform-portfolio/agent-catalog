@@ -14,8 +14,10 @@ RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --requi
 COPY config ./config
 COPY runtime ./runtime
 COPY hosting ./hosting
+COPY telemetry ./telemetry
 COPY tools ./tools
 COPY evaluation ./evaluation
+COPY azure.yaml ./azure.yaml
 COPY tests ./tests
 RUN /opt/venv/bin/python -m unittest discover -s tests -v
 
@@ -26,6 +28,7 @@ COPY --from=build /opt/venv /opt/venv
 COPY config ./config
 COPY runtime ./runtime
 COPY hosting ./hosting
+COPY telemetry ./telemetry
 COPY tools ./tools
 RUN addgroup -g 10001 agent && adduser -D -u 10001 -G agent agent && chmod 700 /home/agent
 

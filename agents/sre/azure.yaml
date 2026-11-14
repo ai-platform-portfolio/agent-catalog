@@ -15,6 +15,10 @@ services:
     language: docker
     image: ${HOSTED_AGENT_IMAGE}
 
+    metadata:
+      source_revision: ${SOURCE_REVISION}
+      image: ${RELEASE_IMAGE}
+
     docker:
       path: image/Dockerfile
       context: .
@@ -33,4 +37,7 @@ services:
       MODEL_DEPLOYMENT_NAME: chat
       PYTHONNOUSERSITE: "1"
       DIAGNOSTICS_BACKEND: provided
+      SOURCE_REVISION: ${SOURCE_REVISION}
+      RELEASE_IMAGE: ${RELEASE_IMAGE}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${AGENT_TRACES_ENDPOINT}
       OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "false"

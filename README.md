@@ -2,7 +2,8 @@
 
 A complete, inspectable agent hosted in **Microsoft Foundry**. SRE is the first
 case study: its instructions, tools and evaluation data can change without
-changing the bounded model/tool loop. AKS is only an optional investigation target.
+changing the bounded model/tool loop. AKS hosts optional shared observability
+packages and can separately be an optional investigation target.
 
 The implementation is kept together in one review PR before extracting reusable
 pieces. The existing shared Docker workflow and native Foundry deployment action
@@ -23,13 +24,17 @@ agents/sre/
 │   └── agent.py            Model client and bounded execution loop
 ├── hosting/
 │   └── server.py           Foundry HTTP adapter and composition
+├── telemetry/
+│   └── tracing.py          Optional bounded OTLP trace export and Langfuse marker
 ├── tools/
 │   └── diagnostics.py      SRE evidence collectors and decision checks
 ├── evaluation/
 │   ├── run.py              Model and hosted evaluation commands
+│   ├── release.py          Validated version promotion/rollback policy
 │   └── cases/              Recorded evidence and independent grading rubrics
 └── tests/
-    └── test_agent.py       Offline contract and integration tests
+    ├── test_agent.py       Runtime contract and integration tests
+    └── test_release.py     Telemetry and release acceptance boundaries
 ```
 
 ```mermaid
@@ -66,6 +71,7 @@ flowchart LR
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
 | Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [image/requirements.txt](agents/sre/image/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
+| Observability | [telemetry/tracing.py](agents/sre/telemetry/tracing.py) | Creates a trace per investigation with model/tool children. Optional OTLP export reaches the shared collector; the collector forwards marked traces to Langfuse and Tempo. |
 
 `azure.yaml` describes hosting. `config/agent.yaml` describes behaviour. `runtime/agent.py`
 provides execution. Keeping those responsibilities visible is the template's
@@ -236,18 +242,70 @@ Foundry injects that reserved value. The endpoint requires Entra authorization.
 
 Foundry versions a container definition, not each Python function separately.
 There are no managed connections, routines, skills, memory stores or toolboxes in
-this template. SDK operational spans cover investigations/model/tool calls;
-message-content capture is explicitly disabled. Trace export still depends on
-the hosting environment's telemetry configuration and has not been live-verified.
+this template. Operational spans cover investigations/model/tool calls;
+message-content capture is explicitly disabled. Export has not been live-verified.
 Logs and redaction remain sensitive; common credential masking is not a DLP guarantee.
 
 **Follow-up:** review the efficiency of `.github/workflows/deploy-agents.yml`,
 including matrix/job overhead and per-agent artifact handoff. Do not change that
-composition during this component review. Signing, automated smoke gating,
-promotion/rollback, route pinning and deletion remain separate delivery work.
-Native deployment can move an unpinned endpoint to the latest version; pin a
-serving route before deploying a candidate. Removing a directory does not delete
-its hosted agent.
+composition without a concrete simplification. Signing and ordered deletion remain
+separate delivery work. Removing a directory does not delete its hosted agent.
+
+## Telemetry and evaluation traceability
+
+The optional **repository** variable `AGENT_TRACES_ENDPOINT` supplies the exact
+HTTPS OTLP traces URL, normally `https://otel.internal.<platform-domain>/v1/traces`.
+Leave it unset to disable collector export. This is not an organization-level AKS
+dependency. Standard `OTEL_SERVICE_NAME` can override the default service name.
+The agent and model-only evaluation each initialize one trace provider; the host
+uses its supported observability callback rather than configuring a second one.
+Batch export has a bounded512-span queue, two-second HTTP timeout and bounded
+flush. Collector outages can drop spans; they do not gate startup or inference.
+No incident/prompt/tool payloads are added to spans or automatically instrumented.
+
+Resource marker `langfuse.export="true"` keeps all child spans in the collector's
+Langfuse pipeline. Agent, generation, tool and evaluator observations carry their
+explicit types; generation spans include reported model/token counts without
+message content. Langfuse credentials remain in the collector. Private ingress
+uses the existing Foundry VNet injection/peering and an AKS internal load balancer
+behind Envoy HTTPS. GitOps owns this shared package and its certificate automation.
+TLS and subnet restrictions provide network trust, not per-agent authentication.
+
+Evaluation reports include case ID/version, evaluation/runtime trace IDs, model,
+evidence mode, agent/version, source commit and image digest. Model-only evaluation
+can export when run from a connected network; GitHub-hosted CI retains reports
+and hosted trace IDs without trying to reach the private collector. Automated
+rubrics check contracts; diagnosis quality still requires the human rubric.
+
+## Candidate acceptance, promotion and rollback
+
+The existing workflow builds/scans/pushes an immutable image, preserves the
+existing fixed serving route, and deploys a candidate through native azd. It then
+invokes the **numeric candidate version**, using new version-pinned sessions for
+each recorded case. Both the returned image/source/version and the contract
+checks must match. A `release-<agent>` artifact retains the record and reports.
+Failures prevent a successful release record; they never automatically move an
+existing fixed serving route. Split/unpinned existing routes require review.
+
+On the **first release**, there is no previous version to preserve. The native
+endpoint may serve that initial candidate before evaluation completes. Keep its
+Entra-protected URL undistributed until acceptance, then explicitly promote/pin
+the validated version before deploying another candidate.
+
+Review the reports and human rubric, then manually run this same workflow on
+`main` with operation `promote`, the agent directory, exact numeric `version`, and
+`release-run` containing its successful deployment/evaluation. `rollback` uses the
+same inputs for an earlier validated version. Neither operation rebuilds or
+creates a version. The workflow verifies the source run, artifact revision,
+current case versions, live image/revision and endpoint authentication/protocols;
+then changes only the native version selector to100% and verifies readback.
+Agent-scoped concurrency serializes deployments and route changes.
+
+Rollback requires the earlier version and its artifacts to still exist. Changed
+evaluation cases require new acceptance evidence. Review old reports before
+routing; green automated checks are not a claim of diagnostic accuracy. Native
+Foundry version/session commands remain azd-owned; the Python adapters only
+handle YAML/JSON and acceptance policy, with no custom Azure deployment API.
 
 ## What changes for another agent
 

@@ -3,14 +3,19 @@ import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 
 from azure.identity import DefaultAzureCredential
 import httpx
 import yaml
+from opentelemetry import trace
+from opentelemetry.propagate import inject
 
 from runtime.agent import load_config, model_client
 from hosting.server import investigate
 from tools.diagnostics import https_url
+from telemetry.tracing import configure, shutdown
 
 
 def load_case(path):
@@ -19,6 +24,8 @@ def load_case(path):
         raise ValueError('Unsupported evaluation case')
     if not isinstance(case.get('reference'), dict) or not isinstance(case.get('rubric'), dict):
         raise ValueError('Case requires an independent reference and rubric')
+    if not isinstance(case.get('id'), str) or type(case.get('version')) is not int or case['version'] < 1:
+        raise ValueError('Case requires an id and positive integer version')
     payload = {'incident': case['incident'], 'evidence': case['tool_fixtures']}
     return case, payload
 
@@ -34,7 +41,7 @@ def score(case, result, config):
         'no_forbidden_claims': not any(re.search(pattern, result['diagnosis']['answer'])
                                        for pattern in automated.get('forbidden_answer_patterns', [])),
     }
-    return {'case': case['id'], 'checks': checks,
+    return {'case': case['id'], 'case_version': case['version'], 'checks': checks,
             'status': 'human_review_required' if all(checks.values()) else 'failed',
             'human_rubric': case['rubric'].get('checks', []), 'result': result}
 
@@ -43,10 +50,30 @@ def hosted_request(endpoint, payload, credential, session):
     """Use the exact Invocations URL returned by azd; do not construct a latest route."""
     https_url(endpoint)
     token = credential.get_token('https://ai.azure.com/.default').token
-    response = session.post(endpoint, json=payload, headers={'Authorization': 'Bearer ' + token},
+    headers = {'Authorization': 'Bearer ' + token}
+    inject(headers)
+    response = session.post(endpoint, json=payload, headers=headers,
                             params={'api-version': 'v1'}, timeout=180)
     response.raise_for_status()
     return response.json()
+
+
+def candidate_request(service, environment, version, payload):
+    """Native azd creates a session pinned to the candidate, bypassing serving traffic."""
+    with tempfile.TemporaryDirectory() as directory:
+        request = Path(directory) / 'request.json'
+        request.write_text(json.dumps(payload))
+        response = subprocess.run([
+            'azd', 'ai', 'agent', 'invoke', service, '--environment', environment,
+            '--version', version, '--protocol', 'invocations', '--new-session',
+            '--input-file', str(request), '--output', 'raw', '--timeout', '180', '--no-prompt',
+        ], capture_output=True, text=True, timeout=210)
+        # Native raw output is HTTP status + headers + JSON body. Do not log raw
+        # responses or headers on failure; retain only the sanitized report.
+        headers, separator, body = response.stdout.partition('\n\n')
+        if response.returncode or not separator or not re.match(r'^HTTP/\S+ 2[0-9]{2}\b', headers):
+            raise RuntimeError('Version-pinned hosted invocation failed')
+        return json.loads(body)
 
 
 def main():
@@ -55,11 +82,43 @@ def main():
     parser.add_argument('--mode', choices=['model', 'hosted'], default='model')
     parser.add_argument('--endpoint', help='Exact HTTPS Invocations endpoint for hosted mode')
     parser.add_argument('--live', action='store_true', help='Hosted live collectors; send no recorded evidence')
+    parser.add_argument('--expected-version', help='Reject a response from a different hosted agent version')
+    parser.add_argument('--service', help='Use native azd version-pinned invocation instead of an endpoint URL')
+    parser.add_argument('--environment', help='Existing azd environment for --service')
+    parser.add_argument('--release-record', type=Path, help='Require the returned deployment to match this image/source record')
     args = parser.parse_args()
-    if args.live and args.mode != 'hosted' or args.mode == 'hosted' and not args.endpoint:
-        parser.error('--live needs hosted mode; hosted mode needs --endpoint')
+    if (args.live and args.mode != 'hosted'
+            or args.mode == 'hosted' and bool(args.endpoint) == bool(args.service)
+            or args.service and (not args.environment or not args.expected_version)):
+        parser.error('Hosted mode needs exactly one of --endpoint or --service; --service needs environment/version')
     case, payload = load_case(args.case)
     config = load_config()
+    configure()
+    try:
+        with trace.get_tracer(__name__).start_as_current_span('agent.evaluate') as span:
+            span.set_attribute('langfuse.observation.type', 'evaluator')
+            span.set_attribute('evaluation.case.id', case['id'])
+            span.set_attribute('evaluation.case.version', case['version'])
+            result = evaluate(args, payload, config)
+            if args.expected_version and str(result.get('deployment', {}).get('version')) != args.expected_version:
+                raise ValueError('Hosted response version does not match the candidate')
+            if args.release_record:
+                release = json.loads(args.release_record.read_text())
+                deployment = result.get('deployment', {})
+                if any(deployment.get(key) != release.get(key) for key in ('agent', 'version', 'image', 'source_revision')):
+                    raise ValueError('Hosted response does not match the immutable release record')
+            if not result.get('trace_id'):
+                raise ValueError('Investigation did not produce a trace identifier')
+            report = score(case, result, config)
+            report['evaluation_trace_id'] = f'{span.get_span_context().trace_id:032x}'
+            report['mode'] = args.mode + ('_live' if args.live else '_recorded')
+            print(json.dumps(report, indent=2))
+            return 1 if report['status'] == 'failed' else 0
+    finally:
+        shutdown()
+
+
+def evaluate(args, payload, config):
     with DefaultAzureCredential() as credential:
         if args.mode == 'model':
             with model_client(credential) as client:
@@ -67,15 +126,15 @@ def main():
         else:
             if args.live:
                 payload.pop('evidence')
-            with httpx.Client(follow_redirects=False) as session:
-                result = hosted_request(args.endpoint, payload, credential, session)
+            if args.service:
+                result = candidate_request(args.service, args.environment, args.expected_version, payload)
+            else:
+                with httpx.Client(follow_redirects=False) as session:
+                    result = hosted_request(args.endpoint, payload, credential, session)
             expected_source = 'live_kubernetes' if args.live else 'caller_provided'
             if result.get('evidence_source') != expected_source:
                 raise ValueError('Hosted backend does not match the evaluation evidence mode')
-    report = score(case, result, config)
-    report['mode'] = args.mode + ('_live' if args.live else '_recorded')
-    print(json.dumps(report, indent=2))
-    return 1 if report['status'] == 'failed' else 0
+    return result
 
 
 if __name__ == '__main__':
