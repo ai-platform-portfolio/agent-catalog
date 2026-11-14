@@ -61,6 +61,7 @@ def run(incident, config, client, tools):
     tracer = trace.get_tracer(__name__)
 
     with tracer.start_as_current_span('agent.investigate') as span:
+        span.set_attribute('langfuse.observation.type', 'agent')
         span.set_attribute('gen_ai.request.model', model)
         span.set_attribute('agent.evidence_source', tools.source)
         for number in range(1, config['limits']['model_requests'] + 1):
@@ -80,8 +81,15 @@ def run(incident, config, client, tools):
                     'strict': True, 'parameters': {'type': 'object', 'properties': {},
                                                  'required': [], 'additionalProperties': False},
                 } for name in available], parallel_tool_calls=False)
-            with tracer.start_as_current_span('agent.model'):
+            with tracer.start_as_current_span('agent.model') as model_span:
+                model_span.set_attribute('langfuse.observation.type', 'generation')
+                model_span.set_attribute('gen_ai.request.model', model)
                 response = client.responses.create(**request)
+                model_span.set_attribute('gen_ai.response.model', getattr(response, 'model', model))
+                usage = getattr(response, 'usage', None)
+                if usage is not None:
+                    model_span.set_attribute('gen_ai.usage.input_tokens', usage.input_tokens)
+                    model_span.set_attribute('gen_ai.usage.output_tokens', usage.output_tokens)
             if response.status != 'completed':
                 raise RuntimeError('Model did not complete the request')
             requested = [item for item in response.output if item.type == 'function_call']
@@ -96,7 +104,9 @@ def run(incident, config, client, tools):
                     'elapsed_seconds': round(time.monotonic() - started, 3),
                     'trace_id': f'{context.trace_id:032x}' if context.is_valid else None,
                     'deployment': {'agent': os.getenv('FOUNDRY_AGENT_NAME'),
-                                   'version': os.getenv('FOUNDRY_AGENT_VERSION')},
+                                   'version': os.getenv('FOUNDRY_AGENT_VERSION'),
+                                   'source_revision': os.getenv('SOURCE_REVISION'),
+                                   'image': os.getenv('RELEASE_IMAGE')},
                 }, evidence
             if len(requested) != 1:
                 raise ValueError('Only one tool call per model request is allowed')
@@ -106,6 +116,7 @@ def run(incident, config, client, tools):
             if len(used) >= config['limits']['tool_calls']:
                 raise RuntimeError('Tool-call budget exhausted')
             with tracer.start_as_current_span('agent.tool') as tool_span:
+                tool_span.set_attribute('langfuse.observation.type', 'tool')
                 tool_span.set_attribute('agent.tool.name', call.name)
                 result = tools.execute(call.name, incident)
             serialized = json.dumps(result, allow_nan=False)

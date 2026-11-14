@@ -10,6 +10,24 @@ on:
     branches: [main]
     paths: ['agents/**', '.github/workflows/deploy-agents.yml']
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy a candidate, or route to a release after reviewing its evaluation artifacts.
+        type: choice
+        options: [deploy, promote, rollback]
+        default: deploy
+
+      agent:
+        description: Agent directory name; required for promotion/rollback.
+        type: string
+
+      version:
+        description: Exact validated Foundry version for promotion/rollback.
+        type: string
+
+      release-run:
+        description: Successful main deployment run containing that version's evaluation artifacts.
+        type: string
 
 permissions:
   contents: read
@@ -32,12 +50,20 @@ jobs:
       - name: Discover native agent projects
         id: agents
         shell: bash
+        env:
+          OPERATION: ${{ inputs.operation || 'deploy' }}
+          SELECTED_AGENT: ${{ inputs.agent }}
         run: |
+          if [[ "$OPERATION" != deploy && ! "$SELECTED_AGENT" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+            echo '::error::Promotion/rollback needs one explicit agent directory.'
+            exit 1
+          fi
           agents='[]'
           for directory in agents/*/; do
             [[ -d "$directory" ]] || continue
             agent=${directory%/}
             agent=${agent##*/}
+            [[ "$OPERATION" == deploy || "$SELECTED_AGENT" == "$agent" ]] || continue
             environment="${GITHUB_REPOSITORY#*/}-$agent"
             [[ "$agent" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ && ${#environment} -le 63 &&
                ! -L "${directory%/}" && -f "$directory/azure.yaml" && ! -L "$directory/azure.yaml" &&
@@ -47,12 +73,13 @@ jobs:
             }
             agents=$(jq -c --arg agent "$agent" '. + [$agent]' <<< "$agents")
           done
+          [[ "$OPERATION" == deploy || "$agents" != '[]' ]] || exit 1
           echo "agents=$agents" >> "$GITHUB_OUTPUT"
           echo "image-prefix=agents/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
   build:
     needs: discover
-    if: needs.discover.outputs.agents != '[]'
+    if: needs.discover.outputs.agents != '[]' && (inputs.operation == '' || inputs.operation == 'deploy')
 
     permissions:
       contents: read
@@ -83,6 +110,7 @@ jobs:
     if: >-
       needs.discover.outputs.agents != '[]' && github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (inputs.operation == '' || inputs.operation == 'deploy')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -138,7 +166,8 @@ jobs:
           echo "image=$(jq -r '(.image | sub(":[^/:]+$"; "")) + "@" + .digest' "$record")" >> "$GITHUB_OUTPUT"
 
       - name: Deploy prebuilt digest with native azd
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@3f4a34eb8a154e505dfe19ad952ca818aca13a18
+        id: candidate
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@9de9412c8f07996b24692a9291ebb49ed3f84ea7
         with:
           service: ${{ matrix.agent }}
           image: ${{ steps.image.outputs.image }}
@@ -148,8 +177,131 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          source-revision: ${{ github.sha }}
+          preserve-serving-version: 'true'
+          traces-endpoint: ${{ vars.AGENT_TRACES_ENDPOINT }}
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+
+      - name: Evaluate the exact hosted candidate
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          SERVICE: ${{ matrix.agent }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+          RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/evaluation-venv"
+          "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
+          mkdir -p "$RUNNER_TEMP/acceptance"
+          cp "$RELEASE_RECORD" "$RUNNER_TEMP/acceptance/release.json"
+          for case in evaluation/cases/*.yaml; do
+            "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.run "$case" --mode hosted \
+              --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
+              --release-record "$RELEASE_RECORD" > "$RUNNER_TEMP/acceptance/$(basename "$case" .yaml).json"
+          done
+
+      - name: Retain candidate and evaluation evidence
+        if: always() && steps.candidate.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.agent }}
+          path: ${{ runner.temp }}/acceptance
+          if-no-files-found: error
+
+  release:
+    needs: discover
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      (inputs.operation == 'promote' || inputs.operation == 'rollback')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+
+    strategy:
+      matrix:
+        agent: ${{ fromJSON(needs.discover.outputs.agents) }}
+
+    concurrency:
+      group: foundry-${{ github.repository }}-${{ matrix.agent }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Require successful main deployment evidence
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN: ${{ inputs.release-run }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$RELEASE_RUN" =~ ^[1-9][0-9]*$ && "$VERSION" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$GITHUB_SHA" ]] || {
+            echo '::error::Refusing a route change from stale main configuration.'
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN" > "$RUNNER_TEMP/source-run.json"
+          jq -e '.conclusion == "success" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/deploy-agents.yml"' "$RUNNER_TEMP/source-run.json" > /dev/null
+          echo "revision=$(jq -r .head_sha "$RUNNER_TEMP/source-run.json")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ matrix.agent }}
+          path: ${{ runner.temp }}/acceptance
+          run-id: ${{ inputs.release-run }}
+          github-token: ${{ github.token }}
+
+      - name: Check for Azure Developer CLI
+        id: azd
+        run: command -v azd >/dev/null 2>&1 && echo 'installed=true' >> "$GITHUB_OUTPUT" || true
+
+      - name: Install Azure Developer CLI when missing
+        if: steps.azd.outputs.installed != 'true'
+        uses: Azure/setup-azd@0b7e3a35ab00f2eee7080c845eb39c3f0ebfa553 # v2
+        with:
+          version: 1.37.3
+
+      - name: Authenticate and select the existing project
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+        run: |
+          azd extension install azure.ai.agents --version 1.0.0 --no-prompt
+          azd auth login --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID" \
+            --federated-credential-provider github --no-prompt
+          azd env new "$AZURE_ENV_NAME" --subscription "$AZURE_SUBSCRIPTION_ID" --location "$AZURE_LOCATION" --no-prompt
+          azd env set "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" -e "$AZURE_ENV_NAME" --no-prompt
+
+      - name: Route only to the validated immutable version
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          SERVICE: ${{ matrix.agent }}
+          VERSION: ${{ inputs.version }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          EXPECTED_REVISION: ${{ steps.evidence.outputs.revision }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/evaluation-venv"
+          "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
+          "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.release "$SERVICE" "$VERSION" "$RUNNER_TEMP/acceptance"
+
+      - name: Retain verified route change
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: routing-${{ matrix.agent }}-${{ inputs.operation }}
+          path: ${{ runner.temp }}/acceptance/routing.json
+          if-no-files-found: error
 
   linear:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
