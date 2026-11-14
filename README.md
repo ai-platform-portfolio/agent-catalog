@@ -15,8 +15,7 @@ Local tests do not establish a successful hosted deployment or live AKS access.
 agents/sre/
 ├── azure.yaml              Foundry deployment definition
 ├── Dockerfile              Container build and startup
-├── requirements.in         Direct dependencies
-├── requirements.lock       Locked dependencies and hashes
+├── requirements.txt        Pinned direct/transitive dependencies and hashes
 ├── config/
 │   └── agent.yaml          Instructions, model, budgets and response schema
 ├── runtime/
@@ -64,7 +63,7 @@ flowchart LR
 | Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
 | Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
-| Image and dependencies | [Dockerfile](agents/sre/Dockerfile), [requirements.lock](agents/sre/requirements.lock) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
+| Image and dependencies | [Dockerfile](agents/sre/Dockerfile), [requirements.txt](agents/sre/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
 
 `azure.yaml` describes hosting. `config/agent.yaml` describes behaviour. `runtime/agent.py`
@@ -112,7 +111,7 @@ From `agents/sre`:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install --require-hashes -r requirements.lock
+.venv/bin/pip install --require-hashes --only-binary=:all: -r requirements.txt
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
@@ -173,6 +172,8 @@ to the API. The implementation uses Azure Identity tokens for the AKS server
 application, TLS verification and fixed GET requests. The configured namespace
 bounds which incidents the live collectors accept.
 No such role, binding, network exception or CA delivery is created in this PR.
+If packaging a trusted public CA, explicitly allow that file in `.dockerignore`;
+private keys and local environment files remain excluded.
 
 Metrics are optional. `METRICS_URL` must identify an HTTPS Prometheus-compatible
 gateway that accepts Entra tokens for `METRICS_TOKEN_SCOPE`. If absent,
@@ -188,19 +189,23 @@ docker build --platform linux/amd64 -t foundry-agent-review agents/sre
 ```
 
 The Docker build runs the same offline tests before producing the non-root runtime.
+The base is official Python 3.12 on Alpine 3.24, with a pinned upstream Kerberos
+security update. Compared with the reviewed Debian variants, it avoids their
+remaining HIGH/CRITICAL findings without another registry login. Alpine uses
+musl rather than glibc: binary-wheel installation, SDK/HTTP tests and amd64 image
+checks cover that compatibility boundary; hosted inference remains a live gate.
 Its digest-pinned Python base and hashed dependencies are reproducible inputs;
-security updates require regenerating the lock/base pin and rebuilding. From the
-repository root, refresh dependencies with:
-
-```sh
-uv pip compile agents/sre/requirements.in --upgrade --generate-hashes \
-  -o agents/sre/requirements.lock
-```
+security updates require updating the package/base pins and rebuilding.
+`requirements.txt` is the single dependency list: direct and transitive packages
+are pinned and hashed together. When updating a version, resolve compatible pins
+and regenerate hashes into a temporary file before replacing this list. There is
+no second dependency declaration to synchronise. Builds require binary wheels so
+package installation does not introduce unpinned source-build dependencies.
 
 [deploy-agents.yml](.github/workflows/deploy-agents.yml) discovers `agents/*/`
 and calls the existing scalar shared Docker workflow for each agent. PR builds
-run without publishing or Azure login. Main publication pushes to ACR, scans by
-digest, then releases a per-agent image record. HIGH/CRITICAL findings block
+run tests and scan the local image without publishing or Azure login. Main
+publication pushes to ACR, scans by digest, then releases a per-agent image record. HIGH/CRITICAL findings block
 Foundry deployment; a rejected image can remain in ACR because push precedes scan.
 
 The deploy matrix verifies the record's repository, source revision, image path

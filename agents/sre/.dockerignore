@@ -4,3 +4,8 @@ __pycache__
 **/__pycache__
 *.pyc
 evaluation/results
+
+**/.git
+**/.env*
+**/*.pem
+**/*.key
