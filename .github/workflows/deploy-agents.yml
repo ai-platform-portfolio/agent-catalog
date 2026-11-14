@@ -106,11 +106,16 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Require current main revision
+      - name: Require current main revision and platform configuration
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_LOCATION: ${{ vars.FOUNDRY_LOCATION }}
         run: |
+          : "${FOUNDRY_PROJECT_ENDPOINT:?Platform startup must publish FOUNDRY_PROJECT_ENDPOINT}"
+          : "${FOUNDRY_LOCATION:?Platform startup must publish FOUNDRY_LOCATION}"
+
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" && "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]] || {
             echo '::error::Refusing deployment from a stale source revision.'
             exit 1
@@ -144,7 +149,7 @@ jobs:
           image: ${{ steps.image.outputs.image }}
           environment: ${{ github.event.repository.name }}-${{ matrix.agent }}
           working-directory: agents/${{ matrix.agent }}
-          location: ${{ vars.AZURE_LOCATION }}
+          location: ${{ vars.FOUNDRY_LOCATION }}
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

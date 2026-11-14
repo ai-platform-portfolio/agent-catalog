@@ -94,9 +94,16 @@ requested. Native environment names derive from repository and agent; use
 `${AZURE_ENV_NAME}` as the hosted-agent name. `.azure/` directories are ignored.
 An empty catalog safely skips both matrices.
 
-Set repository variables `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_LOCATION` to the
-operator-provided existing project endpoint and Azure region. The existing
-organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+Platform startup publishes organization variables `FOUNDRY_PROJECT_ENDPOINT` and
+`FOUNDRY_LOCATION` from the current Terraform-owned project and Foundry region.
+The workflow consumes these directly; onboarding another eligible repository
+does not require copying endpoints or adding it to a GitOps access list. Remove
+repository/environment overrides of these names, which would shadow the refreshed
+organization values after a rebuild. GitHub Free exposes organization variables
+to public repositories such as this catalog, but not private repositories.
+See [GitHub variable access and precedence](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables).
+
+The existing organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
 `AZURE_SUBSCRIPTION_ID` provide the federated identity contract. The current platform
 reuses `kubernetes-spn`; effective CI login and deployment still need live proof.
 Keep credentials and private configuration out of source and images.
