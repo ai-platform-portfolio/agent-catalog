@@ -40,6 +40,15 @@ def validate_evidence(directory, agent, version):
         if (not result.get('trace_id') or any(result.get('deployment', {}).get(key) != release[key]
                                              for key in ('agent', 'version', 'image', 'source_revision'))):
             raise ValueError('Evaluation did not exercise this immutable release')
+    if yaml.safe_load(Path('config/agent.yaml').read_text()).get('memory', {}).get('enabled'):
+        context = json.loads((directory / 'context.json').read_text())
+        required = {'recall_in_new_session', 'checkpoint_in_new_session', 'forget_memory', 'forget_checkpoint'}
+        if (context.get('version') != version or set(context.get('checks', {})) != required
+                or not all(value is True for value in context['checks'].values())):
+            raise ValueError('Missing or failed native context acceptance')
+        knowledge = json.loads((directory / 'knowledge.json').read_text())
+        if knowledge.get('revision') != release['source_revision'] or not knowledge.get('sources'):
+            raise ValueError('Knowledge publication does not match the immutable release')
     return release
 
 

@@ -331,43 +331,91 @@ Sources: [archived source map](https://github.com/sre-agent-foundry),
 [deployment and identity](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
 [protocol adapter](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-protocol-adapter).
 
-## Full-restoration milestone (AI-245, in progress)
+## Complete restoration source — AI-245 (not deployed)
 
-This draft restores the archived third Foundry private-endpoint replay (version 2),
-all six automated checks, model base-URL/token-scope injection, explicit review
-reference, expected serving version and rollback reason. The six Azure fixture
-tools remain replay-only; live Kubernetes collectors cannot execute them. An
-`actionable` decision still means readiness evidence is eligible for the narrow
-coding handoff; an Azure ownership diagnosis remains read-only advice.
+The milestone contains all three archived cases and all six automated checks,
+model endpoint/audience overrides, explicit approval reference, expected serving
+version and rollback reason. The Azure fixture tools are replay-only. Live
+Kubernetes tools remain namespace-scoped reads, with an optional authenticated
+metrics endpoint; generated proposals never execute inside Foundry.
 
-The shared `application-library/agent-runtime` package implements native Foundry
-state, managed memory, file-search publication and the archived coding functions.
-The catalog composition is staged behind `memory.enabled: false`. **This draft is
-not ready to merge or test end-to-end.** It still needs the real released wheel and
-hash, activation of the native predeploy hook/environment fields, and hosted
-acceptance. There is no placeholder dependency or claim that memory is running.
-
-The intended developer values are:
-
-```yaml
-memory:
-  enabled: true
-  retention_days: 30
-
-knowledge:
-  path: knowledge
+```mermaid
+flowchart LR
+  K[Kubernetes readiness Event] --> A[Argo Events subscription]
+  A --> G[GitHub dispatch]
+  G --> I[Foundry investigator]
+  I --> S[Native state and memory]
+  I --> R[Reviewed file-search toolbox]
+  I --> F[Exact-base source fetch]
+  F --> P[Foundry proposer]
+  P --> V[Isolated Docker validation]
+  V --> D[Scoped draft PR publisher]
+  I --> O[OTel collector and Langfuse]
 ```
 
-State/checkpoints and explicit remember/recall/forget commands are private to the
-Foundry-authenticated user's scope. Only reviewed public runbooks enter the
-project-shared toolbox. Recorded evaluation evidence bypasses all persistence.
-Historical context stays separate from current diagnostic evidence and cannot
-satisfy readiness/handoff guards. See the shared package's retention, review and
-preview limitations before enabling it.
+| Component | Owner/location |
+| --- | --- |
+| Thin runtime binding, instructions and case-study tools | `agents/sre/runtime`, `config`, `tools` |
+| Foundry protocol adapter and composition | `agents/sre/hosting` |
+| Model/tool loop, grading, native memory/state, knowledge, intake and bounded coding capabilities | Released `application-library/agent-runtime` package |
+| Event/credential/RBAC templates | `application-helm-chart/templates/agents` and `templates/credentials` |
+| Publication and incident orchestration | `deploy-agents.yml` and `incident.yml`; separate lifecycle purposes |
+| Scalar native invocation and scoped App token actions | `ops-shared` |
+| Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
 
-Remaining acceptance includes live read-only collector authorization, native
-readiness-event intake with UID deduplication/rate limiting, isolated
-fetch/Foundry-propose/test/draft-PR orchestration, actual memory restart/isolation/
-forget behavior, citations, telemetry and revision-specific release/rollback.
-Restoring coding functions alone does not deliver that orchestration. No agent or
-coding job will be restored on AKS. No new networking is authorized by this draft.
+**This PR remains draft until the shared runtime is released and its actual wheel
+URL/SHA256 is pinned.** No placeholder dependency is checked in. Memory activation,
+its native predeploy hook and the additional runtime environment fields are held
+alongside that pin. The final image is tested separately with the actual locally
+built wheel; that is not a published-release or live-deployment claim.
+
+The developer intent for memory is `memory.enabled: true`,
+`memory.retention_days: 30`, and `knowledge.path: knowledge`. Only reviewed public
+Markdown goes into the project-shared toolbox. Personal memory and checkpoints
+use the Foundry-authenticated caller. Reviewed remember, recall, named/all-memory
+forget, checkpoint resume and checkpoint deletion are explicit operations.
+Recorded evaluations bypass persistence and retrieval; historical context cannot
+satisfy current readiness evidence guards.
+
+`incident.yml` uses one trusted orchestration job and installs its capabilities
+once. The current reviewed caller policy governs writes; an agent-supplied source
+revision never selects executable host code or publication policy. The same pinned
+Foundry version investigates and proposes. Validation runs in a non-root Docker
+sandbox with no credentials, network, host environment, socket or artifact mounts.
+Publication credentials are minted only after validation succeeds. Trusted host
+steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
+overwrite another proposal or reopen a closed incident PR.
+
+The optional subscription values are in `deploy/events.yaml`. The platform
+operator supplies the target namespace, existing GitHub App metadata and actual
+Foundry **instance identity** principal to the shared chart at bootstrap. Render
+only its Argo registration template initially; child reconciliation registers
+nothing. No per-application delivery resource is added to GitOps.
+
+AKS test inputs are optional **repository-level** configuration:
+`AGENT_DIAGNOSTICS_BACKEND=kubernetes`, `KUBE_API_URL`, public `KUBE_CA_PEM`,
+`KUBE_ALLOWED_NAMESPACE` and `KUBE_ALLOWED_WORKLOAD`. They introduce no AKS org
+variable dependency. The current public-only AKS API does not become reachable
+from Foundry merely because VNets are peered; no network settings have changed.
+Register the subscription only after the chosen target is reachable and its
+read-only RoleBinding is reconciled. Provided-evidence cases remain independent
+of an available AKS cluster.
+
+`evaluation/context.py` checks new-session recall, checkpoint resume and deletion
+using synthetic records, and cleans up only its own records. Container restart,
+a second genuinely authenticated caller, server TTL enforcement, actual retrieval
+citations, live diagnostics/traces and the controlled event-to-draft chain remain
+live acceptance gates. Merging source does not prove any of them.
+
+Stop/delete the event subscription before retiring the hosted agent; drain or
+cancel active incident runs. Retain earlier versions and their knowledge manifests
+for rollback. Delete retired knowledge with the shared ownership-checked cleanup
+function after no live version references it. Native agent/project deletion and
+memory retention are distinct from keeping source runbooks in Git.
+
+
+Duplicate Event deliveries do not start another handoff. Use GitHub's native
+**Re-run failed jobs** on the original run to resume a failed handoff: its run ID
+and incident branch stay stable. A changed proposal/base fails closed rather than
+silently replacing a draft. The isolation boundary is the tested Docker sandbox,
+not a claim of separate virtual machines for every trusted orchestration step.

@@ -1,0 +1,18 @@
+# Optional case-study subscription. Agent execution is deployed by azure.yaml.
+# Bootstrap supplies the selected target namespace, existing App metadata and
+# deployed Foundry instance principal; no shared GitOps registration is needed.
+name: agent-catalog-sre
+namespace: agent-catalog-sre
+
+agentIntake:
+  enabled: true
+  repository: ai-platform-portfolio/agent-catalog
+  agent: sre
+  target:
+    namespace: ""
+    workload: api
+
+platform:
+  lifecycle:
+    cleanup:
+      enabled: true

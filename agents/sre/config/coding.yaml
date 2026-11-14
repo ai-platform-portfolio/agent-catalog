@@ -1,0 +1,12 @@
+repository: ai-platform-portfolio/preview-environments
+base_ref: main
+editable_paths: [deploy/, tests/]
+context_paths: [deploy/, tests/, backend/]
+checks:
+  - [python, -m, unittest, discover, -s, tests, -p, test_readiness_contract.py]
+instructions: >-
+  Compare the configured readiness probe with implemented API routes and current
+  HTTP evidence. Propose a narrow source correction with a regression test when
+  supported; otherwise abstain. Do not change authentication, networking, secrets
+  or deployment permissions. Source repository ownership is supplied by this
+  reviewed policy, never inferred from arbitrary incident text.

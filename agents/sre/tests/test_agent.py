@@ -38,7 +38,7 @@ class Model:
         number = len(self.requests)
         calls = [Call(self.calls[number - 1])] if number <= len(self.calls) else []
         answer = {'decision': self.decision, 'answer': 'Observed evidence requires verification; no change was made.',
-                  'evidence': self.calls}
+                  'evidence': self.calls, 'citations': []}
         return SimpleNamespace(status='completed', output=calls, output_text=json.dumps(answer))
 
     def close(self):
@@ -75,9 +75,17 @@ class AgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'degraded readiness'):
             investigate(payload, load_config(), Model(['workload_state', 'recent_events'], 'actionable'))
         result = {'diagnosis': {'decision': 'abstain', 'answer': 'Need more verified evidence for a diagnosis.',
-                                'evidence': ['not_executed']}}
+                                'evidence': ['not_executed'], 'citations': []}}
         with self.assertRaises(ValueError):
             validate_diagnosis(result, {})
+
+    def test_historical_citations_cannot_invent_or_cross_source_ids(self):
+        result = {'diagnosis': {'decision': 'abstain', 'answer': 'Current evidence remains insufficient.',
+                                'evidence': [], 'citations': ['file-other']}}
+        with self.assertRaises(ValueError):
+            validate_diagnosis(result, {}, {'knowledge': {'citations': [{'file_id': 'file-owned'}]}})
+        result['diagnosis']['citations'] = ['file-owned']
+        self.assertEqual(validate_diagnosis(result, {}, {'knowledge': {'citations': [{'file_id': 'file-owned'}]}}), result)
 
     def test_unknown_repeated_and_argument_bearing_tools_are_rejected(self):
         for calls in [['delete_pod'], ['workload_state', 'workload_state']]:
@@ -107,7 +115,7 @@ class AgentTests(unittest.TestCase):
     def test_model_endpoint_and_identity_are_injected_without_a_secret(self):
         credential = Mock(spec=['get_token'])
         credential.get_token.return_value = SimpleNamespace(token='short-lived-test-token', expires_on=time.time() + 3600)
-        with patch('runtime.agent.OpenAI') as constructor:
+        with patch('portfolio_agent_runtime.agent.OpenAI') as constructor:
             model_client(credential, 'https://example.services.ai.azure.com/api/projects/demo')
             self.assertEqual(constructor.call_args.kwargs['base_url'],
                              'https://example.services.ai.azure.com/api/projects/demo/openai/v1/')
@@ -121,7 +129,7 @@ class AgentTests(unittest.TestCase):
     def test_model_gateway_override_preserves_its_url_and_uses_declared_audience(self):
         with patch.dict('os.environ', {'MODEL_BASE_URL': 'https://gateway.test/models/v1',
                                        'MODEL_TOKEN_SCOPE': 'https://gateway.test/.default'}):
-            with patch('runtime.agent.OpenAI') as constructor, patch('runtime.agent.get_bearer_token_provider') as provider:
+            with patch('portfolio_agent_runtime.agent.OpenAI') as constructor, patch('portfolio_agent_runtime.agent.get_bearer_token_provider') as provider:
                 model_client(Mock())
                 self.assertEqual(constructor.call_args.kwargs['base_url'], 'https://gateway.test/models/v1/')
                 self.assertEqual(provider.call_args.args[1], 'https://gateway.test/.default')

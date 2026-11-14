@@ -212,7 +212,7 @@ def live_clients(credential):
     api = httpx.Client(
         base_url=https_url(os.environ['KUBE_API_URL']),
         auth=EntraAuth(credential, '6dae42f8-4368-4678-94ff-3960e28e3630/.default'),
-        verify=ssl.create_default_context(cafile=os.getenv('KUBE_CA_FILE')),
+        verify=ssl.create_default_context(cafile=os.getenv('KUBE_CA_FILE'), cadata=os.getenv('KUBE_CA_PEM') or None),
         timeout=8, follow_redirects=False,
     )
     metrics = None
@@ -223,10 +223,10 @@ def live_clients(credential):
     return api, metrics
 
 
-def validate_diagnosis(result, evidence):
+def validate_diagnosis(result, evidence, historical_context=None):
     """Case-study guard: model text alone cannot establish actionable evidence."""
     diagnosis = result['diagnosis']
-    if (not isinstance(diagnosis, dict) or set(diagnosis) != {'decision', 'answer', 'evidence'}
+    if (not isinstance(diagnosis, dict) or set(diagnosis) != {'decision', 'answer', 'evidence', 'citations'}
             or diagnosis['decision'] not in {'actionable', 'abstain'}
             or not isinstance(diagnosis['answer'], str) or not 20 <= len(diagnosis['answer']) <= 2500
             or not isinstance(diagnosis['evidence'], list)
@@ -234,6 +234,13 @@ def validate_diagnosis(result, evidence):
             or len(set(diagnosis['evidence'])) != len(diagnosis['evidence'])
             or not set(diagnosis['evidence']) <= set(evidence)):
         raise ValueError('Diagnosis must have the declared structure and cite only executed tools')
+    history = historical_context or {}
+    allowed = {memory['id'] for memory in history.get('memories', [])}
+    allowed.update(source['file_id'] for source in history.get('knowledge', {}).get('citations', []))
+    citations = diagnosis['citations']
+    if (not isinstance(citations, list) or any(not isinstance(value, str) for value in citations)
+            or len(citations) != len(set(citations)) or not set(citations) <= allowed):
+        raise ValueError('Historical citations must identify supplied sources only')
     if diagnosis['decision'] == 'actionable':
         if not {'workload_state', 'recent_events'} <= set(diagnosis['evidence']):
             raise ValueError('Actionable diagnosis requires workload and event evidence')

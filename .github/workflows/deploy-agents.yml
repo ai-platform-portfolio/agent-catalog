@@ -5,10 +5,10 @@ name: Deploy catalog agents
 
 on:
   pull_request:
-    paths: ['agents/**', '.github/workflows/deploy-agents.yml']
+    paths: ['agents/**', '.github/workflows/**']
   push:
     branches: [main]
-    paths: ['agents/**', '.github/workflows/deploy-agents.yml']
+    paths: ['agents/**', '.github/workflows/**']
   workflow_dispatch:
     inputs:
       operation:
@@ -182,9 +182,16 @@ jobs:
           ' "$record" > /dev/null
           echo "image=$(jq -r '(.image | sub(":[^/:]+$"; "")) + "@" + .digest' "$record")" >> "$GITHUB_OUTPUT"
 
+      - name: Install the agent's verified SDK and shared capabilities once
+        working-directory: agents/${{ matrix.agent }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/evaluation-venv"
+          "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
+          echo "$RUNNER_TEMP/evaluation-venv/bin" >> "$GITHUB_PATH"
+
       - name: Deploy prebuilt digest with native azd
         id: candidate
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@575a43ffdbf4ec135ee1cfdf35b00805b083fcd6
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
         with:
           service: ${{ matrix.agent }}
           image: ${{ steps.image.outputs.image }}
@@ -199,6 +206,12 @@ jobs:
           traces-endpoint: ${{ vars.AGENT_TRACES_ENDPOINT }}
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          # Optional case-study inputs stay at repository level, never org-wide.
+          AGENT_DIAGNOSTICS_BACKEND: ${{ vars.AGENT_DIAGNOSTICS_BACKEND || 'provided' }}
+          KUBE_API_URL: ${{ vars.KUBE_API_URL }}
+          KUBE_CA_PEM: ${{ vars.KUBE_CA_PEM }}
+          KUBE_ALLOWED_NAMESPACE: ${{ vars.KUBE_ALLOWED_NAMESPACE }}
+          KUBE_ALLOWED_WORKLOAD: ${{ vars.KUBE_ALLOWED_WORKLOAD }}
 
       - name: Evaluate the exact hosted candidate
         working-directory: agents/${{ matrix.agent }}
@@ -207,9 +220,9 @@ jobs:
           AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
           CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
           RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
+          KUBE_ALLOWED_NAMESPACE: ${{ vars.KUBE_ALLOWED_NAMESPACE }}
+          KUBE_ALLOWED_WORKLOAD: ${{ vars.KUBE_ALLOWED_WORKLOAD }}
         run: |
-          python3 -m venv "$RUNNER_TEMP/evaluation-venv"
-          "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
           mkdir -p "$RUNNER_TEMP/acceptance"
           cp "$RELEASE_RECORD" "$RUNNER_TEMP/acceptance/release.json"
           for case in evaluation/cases/*.yaml; do
@@ -217,6 +230,10 @@ jobs:
               --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
               --release-record "$RELEASE_RECORD" > "$RUNNER_TEMP/acceptance/$(basename "$case" .yaml).json"
           done
+          if "$RUNNER_TEMP/evaluation-venv/bin/python" -c 'from runtime.agent import load_config; raise SystemExit(not load_config().get("memory", {}).get("enabled", False))'; then
+            "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.context "$SERVICE" "$AZURE_ENV_NAME" "$CANDIDATE_VERSION" \
+              --review "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" --output "$RUNNER_TEMP/acceptance/context.json"
+          fi
 
       - name: Retain candidate and evaluation evidence
         if: always() && steps.candidate.outcome == 'success'

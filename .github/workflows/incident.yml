@@ -1,0 +1,200 @@
+name: Investigate and propose a draft fix
+
+on:
+  repository_dispatch:
+    types: [agent-incident]
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: Agent directory.
+        type: string
+        default: sre
+      namespace:
+        description: Configured investigation namespace.
+        type: string
+        required: true
+      workload:
+        description: Configured workload.
+        type: string
+        required: true
+      event-uid:
+        description: Stable event UUID, reused on retries.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: incident-${{ github.repository }}-${{ github.event.client_payload.agent || inputs.agent }}-${{ github.event.client_payload.event_uid || inputs.event-uid }}
+  cancel-in-progress: false
+
+jobs:
+  incident:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate event metadata; never forward Event messages
+        id: request
+        env:
+          AGENT: ${{ github.event.client_payload.agent || inputs.agent }}
+          TARGET_NAMESPACE: ${{ github.event.client_payload.namespace || inputs.namespace }}
+          WORKLOAD: ${{ github.event.client_payload.workload || inputs.workload }}
+          EVENT_UID: ${{ github.event.client_payload.event_uid || inputs.event-uid }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          from pathlib import Path
+          from uuid import UUID
+          agent, namespace, workload, uid = (os.environ[k] for k in ('AGENT', 'TARGET_NAMESPACE', 'WORKLOAD', 'EVENT_UID'))
+          for value in (agent, namespace, workload):
+              if not re.fullmatch(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?', value) or len(value) > 63:
+                  raise ValueError('Invalid event target')
+          root = Path('agents') / agent
+          if str(UUID(uid)) != uid or root.is_symlink() or not (root / 'azure.yaml').is_file():
+              raise ValueError('Invalid Event UID or agent project')
+          request = {'operation': 'event', 'event_uid': uid, 'namespace': namespace,
+                     'workload': workload, 'delivery_id': os.environ['GITHUB_RUN_ID']}
+          Path(os.environ['RUNNER_TEMP'], 'request.json').write_text(json.dumps(request))
+          identity = hashlib.sha256(f'{os.environ["GITHUB_REPOSITORY"]}/{agent}/{namespace}/{workload}/{uid}'.encode()).hexdigest()[:40]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'agent={agent}\nincident=event-{identity}\n')
+          PY
+
+      - name: Investigate in Foundry
+        id: investigation
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
+        with:
+          service: ${{ steps.request.outputs.agent }}
+          environment: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
+          working-directory: agents/${{ steps.request.outputs.agent }}
+          request-file: ${{ runner.temp }}/request.json
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          location: ${{ vars.AZURE_LOCATION }}
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+
+      - name: Verify immutable evidence and delivery ownership
+        id: evidence
+        env:
+          RESPONSE: ${{ steps.investigation.outputs.response }}
+          VERSION: ${{ steps.investigation.outputs.version }}
+          AGENT_NAME: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/incident"
+          cp "$RESPONSE" "$RUNNER_TEMP/incident/investigation.json"
+          if jq -e '.status == "in_progress"' "$RESPONSE" >/dev/null; then
+            echo 'actionable=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if jq -e '.status == "rate_limited"' "$RESPONSE" >/dev/null; then
+            echo '::error::Intake rate limit reached; rerun this failed job after one minute.'
+            exit 1
+          fi
+          jq -e --arg version "$VERSION" --arg agent "$AGENT_NAME" '
+            .deployment.agent == $agent and .deployment.version == $version and
+            (.deployment.image | test("@sha256:[a-f0-9]{64}$")) and
+            (.deployment.source_revision | test("^[a-f0-9]{40}$")) and
+            .evidence_source == "live_kubernetes"
+          ' "$RESPONSE" >/dev/null
+          echo "actionable=$(jq -r --arg delivery "$GITHUB_RUN_ID" '.diagnosis.decision == "actionable" and .delivery_id == $delivery' "$RESPONSE")" >> "$GITHUB_OUTPUT"
+
+      - name: Install the verified capabilities once and fetch reviewed source
+        id: source
+        if: steps.evidence.outputs.actionable == 'true'
+        env:
+          AGENT: ${{ steps.request.outputs.agent }}
+          INCIDENT_ID: ${{ steps.request.outputs.incident }}
+          GITHUB_READ_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/runtime"
+          "$RUNNER_TEMP/runtime/bin/pip" install --require-hashes --only-binary=:all: -r "agents/$AGENT/image/requirements.txt"
+          echo "$RUNNER_TEMP/runtime/bin" >> "$GITHUB_PATH"
+          # Current reviewed caller policy governs writes, never code or policy
+          # downloaded using an agent-supplied source revision.
+          "$RUNNER_TEMP/runtime/bin/python" -m portfolio_agent_runtime.handoff prepare "$RUNNER_TEMP/incident" \
+            --config "agents/$AGENT/config/coding.yaml" --investigation "$RUNNER_TEMP/incident/investigation.json" --incident-id "$INCIDENT_ID"
+          repository=$(jq -r .repository "$RUNNER_TEMP/incident/policy.json")
+          echo "owner=${repository%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${repository#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Propose in Foundry without GitHub write credentials
+        id: proposal
+        if: steps.evidence.outputs.actionable == 'true'
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
+        with:
+          service: ${{ steps.request.outputs.agent }}
+          environment: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
+          working-directory: agents/${{ steps.request.outputs.agent }}
+          request-file: ${{ runner.temp }}/incident/request.json
+          version: ${{ steps.investigation.outputs.version }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          location: ${{ vars.AZURE_LOCATION }}
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+
+      - name: Verify the proposal came from the same pinned release
+        if: steps.evidence.outputs.actionable == 'true'
+        env:
+          RESPONSE: ${{ steps.proposal.outputs.response }}
+        run: |
+          jq -e --slurpfile investigation "$RUNNER_TEMP/incident/investigation.json" \
+            '.deployment == $investigation[0].deployment and (.proposal | type == "object")' "$RESPONSE" >/dev/null
+          jq .proposal "$RESPONSE" > "$RUNNER_TEMP/incident/proposal.json"
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        if: steps.evidence.outputs.actionable == 'true'
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate in a non-root sandbox without network or credentials
+        if: steps.evidence.outputs.actionable == 'true'
+        run: |
+          image=$(jq -r .deployment.image "$RUNNER_TEMP/incident/investigation.json")
+          [[ "$image" =~ ^([a-z0-9]+)\.azurecr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]] || exit 1
+          az acr login --name "${BASH_REMATCH[1]}"
+          docker pull "$image"
+          # The sandbox mounts only read-only source. It receives no host env,
+          # network, Docker socket, Azure cache or artifact-directory mount.
+          VALIDATION_IMAGE="$image" python -m portfolio_agent_runtime.handoff validate "$RUNNER_TEMP/incident"
+
+      - name: Mint publication credentials only after validation passes
+        id: token
+        if: steps.evidence.outputs.actionable == 'true'
+        uses: ai-platform-portfolio/ops-shared/.github/actions/github-app-token@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
+        with:
+          vault-name: ${{ secrets.FUNCTION_VAULT }}
+          key-name: ai-platform-clusters-pem-key
+          app-id: '5471830'
+          owner: ${{ steps.source.outputs.owner }}
+          repository: ${{ steps.source.outputs.name }}
+          contents: write
+          pull-requests: write
+
+      - name: Publish a validated draft; never execute target code on the host
+        if: steps.evidence.outputs.actionable == 'true'
+        env:
+          GITHUB_WRITE_TOKEN: ${{ steps.token.outputs.token }}
+        run: python -m portfolio_agent_runtime.handoff publish "$RUNNER_TEMP/incident"
+
+      - name: Retain bounded audit records, including failed validation
+        if: always() && steps.investigation.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: incident-${{ steps.request.outputs.agent }}
+          path: ${{ runner.temp }}/incident/*.json
+          if-no-files-found: warn
+          overwrite: true

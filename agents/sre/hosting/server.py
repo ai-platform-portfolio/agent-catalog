@@ -24,7 +24,7 @@ def investigate(payload, config, client, live=None, historical_context=None):
     else:
         tools = ProvidedTools(payload.get('evidence', {}))
     result, evidence = run(payload['incident'], config, client, tools, historical_context)
-    return validate_diagnosis(result, evidence)
+    return validate_diagnosis(result, evidence, historical_context)
 
 
 def build_app(client=None, config=None, **host_options):
@@ -48,7 +48,8 @@ def build_app(client=None, config=None, **host_options):
     if config.get('memory', {}).get('enabled'):
         from azure.ai.projects import AIProjectClient
         credential = credential or DefaultAzureCredential()
-        project = AIProjectClient(endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'], credential=credential)
+        project = AIProjectClient(endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'], credential=credential,
+                                  connection_timeout=5, read_timeout=15, retry_total=0)
 
     host_options.setdefault('configure_observability', configure)
     app = InvocationAgentServerHost(**host_options)
@@ -65,7 +66,35 @@ def build_app(client=None, config=None, **host_options):
                     if len(body) > 131072:
                         return JSONResponse({'error': 'Request exceeds 128 KiB'}, status_code=413)
                 payload = json.loads(body)
-                if project is not None and 'evidence' not in payload:
+                operation = payload.get('operation') if isinstance(payload, dict) else None
+                if operation == 'event':
+                    if live is None:
+                        raise ValueError('Event intake requires live collectors')
+                    from portfolio_agent_runtime.intake import investigate_event
+                    async def event_investigation(body):
+                        if project is None:
+                            return await asyncio.to_thread(investigate, body, config, client, live)
+                        from portfolio_agent_runtime.hosting import invoke as persistent_invoke
+                        return await persistent_invoke(
+                            body, lambda request_body, history: investigate(request_body, config, client, live, history),
+                            agent=os.environ['FOUNDRY_AGENT_NAME'], project=project,
+                            memory_store=os.environ['MEMORY_STORE_NAME'], retention_days=config['memory']['retention_days'],
+                            knowledge=json.loads(os.environ['KNOWLEDGE_MANIFEST_JSON']))
+                    result = await investigate_event(
+                        payload, event_investigation,
+                        agent=os.environ['FOUNDRY_AGENT_NAME'], namespace=os.environ['KUBE_ALLOWED_NAMESPACE'],
+                        workload=os.environ['KUBE_ALLOWED_WORKLOAD'])
+                elif operation == 'propose':
+                    from pathlib import Path
+                    import yaml
+                    from portfolio_agent_runtime.coding import propose_request
+                    policy = yaml.safe_load((Path(__file__).resolve().parents[1] / 'config/coding.yaml').read_text())
+                    proposal = await asyncio.to_thread(propose_request, payload, policy, client,
+                                                       os.getenv('MODEL_DEPLOYMENT_NAME', config['model']))
+                    result = {'proposal': proposal, 'deployment': {
+                        'agent': os.getenv('FOUNDRY_AGENT_NAME'), 'version': os.getenv('FOUNDRY_AGENT_VERSION'),
+                        'source_revision': os.getenv('SOURCE_REVISION'), 'image': os.getenv('RELEASE_IMAGE')}}
+                elif project is not None and 'evidence' not in payload:
                     from portfolio_agent_runtime.hosting import invoke as invoke_with_context
                     manifest = json.loads(os.environ['KNOWLEDGE_MANIFEST_JSON'])
                     result = await invoke_with_context(
