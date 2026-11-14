@@ -25,7 +25,7 @@ agents/sre/
 ├── hosting/
 │   └── server.py           Foundry HTTP adapter and composition
 ├── telemetry/
-│   └── tracing.py          Optional bounded OTLP trace export and Langfuse marker
+│   └── tracing.py          Caller settings for the shared observability package
 ├── tools/
 │   └── diagnostics.py      SRE evidence collectors and decision checks
 ├── evaluation/
@@ -257,7 +257,10 @@ The optional **repository** variable `AGENT_TRACES_ENDPOINT` supplies the exact
 HTTPS OTLP traces URL, normally `https://otel.internal.<platform-domain>/v1/traces`.
 Leave it unset to disable collector export. This is not an organization-level AKS
 dependency. Standard `OTEL_SERVICE_NAME` can override the default service name.
-The agent and model-only evaluation each initialize one trace provider; the host
+The versioned `portfolio-agent-observability` wheel from application-library owns
+provider setup, bounded export and shutdown. This agent supplies only service
+identity and the Langfuse choice in `telemetry/tracing.py`; operation spans stay
+with their code. The agent and model-only evaluation each initialize one provider; the host
 uses its supported observability callback rather than configuring a second one.
 Batch export has a bounded512-span queue, two-second HTTP timeout and bounded
 flush. Collector outages can drop spans; they do not gate startup or inference.

@@ -1702,3 +1702,6 @@ yarl==1.25.1 \
     --hash=sha256:f53dcd26694f148f738edc052b5a69234833e739f10f4c3287bdfd8ec0f7b326 \
     --hash=sha256:f61964f235a43738bfac50da46fc4254943a7eea3051aeb0b6fc7c992c29fadc \
     --hash=sha256:fe01645169a2112aa1d4ebc3e4c5f029c5c8f97adfc32e5d37c993b39a994d75
+
+portfolio-agent-observability @ https://github.com/ai-platform-portfolio/application-library/releases/download/observability-v0.1.0/portfolio_agent_observability-0.1.0-py3-none-any.whl \
+    --hash=sha256:56deb0686191ef756c815539a5d963309d13cf4a22200a9ac6eb17ef5a3755fe
