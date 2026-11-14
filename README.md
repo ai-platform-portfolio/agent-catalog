@@ -3,7 +3,6 @@
 A complete, inspectable agent hosted in **Microsoft Foundry**. SRE is the first
 case study: its instructions, tools and evaluation data can change without
 changing the bounded model/tool loop. AKS is only an optional investigation target.
-There is no agent, broker, publisher or coding worker running on AKS.
 
 The implementation is kept together in one review PR before extracting reusable
 pieces. The existing shared Docker workflow and native Foundry deployment action
@@ -11,6 +10,27 @@ are already in use by the caller; this candidate adds their first actual agent.
 Local tests do not establish a successful hosted deployment or live AKS access.
 
 ## Where each component lives
+
+```text
+agents/sre/
+├── azure.yaml              Foundry deployment definition
+├── Dockerfile              Container build and startup
+├── requirements.in         Direct dependencies
+├── requirements.lock       Locked dependencies and hashes
+├── config/
+│   └── agent.yaml          Instructions, model, budgets and response schema
+├── runtime/
+│   └── agent.py            Model client and bounded execution loop
+├── hosting/
+│   └── server.py           Foundry HTTP adapter and composition
+├── tools/
+│   └── diagnostics.py      SRE evidence collectors and decision checks
+├── evaluation/
+│   ├── run.py              Model and hosted evaluation commands
+│   └── cases/              Recorded evidence and independent grading rubrics
+└── tests/
+    └── test_agent.py       Offline contract and integration tests
+```
 
 ```mermaid
 flowchart LR
@@ -39,15 +59,15 @@ flowchart LR
 | Project and model deployment | Existing bootstrap infrastructure; model alias `chat` | Hosts the project API and underlying model deployment. This PR creates neither. |
 | Agent definition/version | [azure.yaml](agents/sre/azure.yaml) | Registers the image, protocol, runtime environment and endpoint. No custom compute sizing is specified here. |
 | Runtime identity | Platform-created Entra agent identity | Gives the running agent its own identity; the GitHub publisher identity is separate. Extra external access requires explicit grants. |
-| HTTP protocol and health | [server.py](agents/sre/server.py), official Invocations adapter | Routes the public authenticated endpoint to port 8088; the adapter supplies `/readiness`, shutdown and tracing integration. |
-| Behaviour and model selection | [agent.yaml](agents/sre/agent.yaml), `MODEL_DEPLOYMENT_NAME` | Instructions and tool definitions are **inside the container**, sent with model requests; they are not separate portal prompt-agent resources. |
-| Model injection/authentication | [runtime.py](agents/sre/runtime.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
-| Agent loop and working state | [runtime.py](agents/sre/runtime.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
-| SRE tools and decision checks | [tools.py](agents/sre/tools.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
-| Image and dependencies | [Dockerfile](agents/sre/Dockerfile), [requirements.lock](agents/sre/requirements.lock) | Pulls the immutable amd64 image from ACR. Runtime contains no Docker, Helm, kubectl or grader files. |
-| Evaluation | [evaluate.py](agents/sre/evaluate.py), [cases](agents/sre/evals), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
+| HTTP protocol and health | [hosting/server.py](agents/sre/hosting/server.py), official Invocations adapter | Routes the public authenticated endpoint to port 8088; the adapter supplies `/readiness`, shutdown and tracing integration. |
+| Behaviour and model selection | [config/agent.yaml](agents/sre/config/agent.yaml), `MODEL_DEPLOYMENT_NAME` | Instructions and tool definitions are **inside the container**, sent with model requests; they are not separate portal prompt-agent resources. |
+| Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
+| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
+| SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
+| Image and dependencies | [Dockerfile](agents/sre/Dockerfile), [requirements.lock](agents/sre/requirements.lock) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
+| Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
 
-`azure.yaml` describes hosting. `agent.yaml` describes behaviour. `runtime.py`
+`azure.yaml` describes hosting. `config/agent.yaml` describes behaviour. `runtime/agent.py`
 provides execution. Keeping those responsibilities visible is the template's
 main purpose; adding a framework, plugin registry or custom deployment manifest
 would obscure this first review.
@@ -76,8 +96,7 @@ sequenceDiagram
     H-->>E: Diagnosis, tool/model counts, evidence source, trace and deployed version
 ```
 
-The original archive split this loop between a hosted handler and an AKS broker.
-Here it runs entirely in Foundry. The model can request only declared functions,
+The investigation loop runs in the Foundry-hosted container. The model can request only declared functions,
 with no arbitrary namespace, URL, shell command or tool arguments. Each tool can
 run once per investigation; request, time, output-token and evidence budgets bound
 work. Two investigations can run concurrently per container; additional requests
@@ -100,9 +119,9 @@ python3 -m venv .venv
 | Mode | What is real | What is recorded / simulated |
 | --- | --- | --- |
 | Unit/HTTP contract tests | Runtime, HTTP adapter, validation and collectors' request contracts | Model responses and external HTTP responses; no Azure or telemetry export |
-| `evaluate.py --mode model` | Authenticated model inference | Dataset evidence; no hosted container and no AKS reads |
-| `evaluate.py --mode hosted` | Foundry endpoint, hosted runtime, identity and model inference | Dataset evidence; no AKS reads |
-| `evaluate.py --mode hosted --live` | Hosted runtime plus configured external collectors | No fixture evidence is sent; case expectations still need human comparison to current conditions |
+| `python -m evaluation.run --mode model` | Authenticated model inference | Dataset evidence; no hosted container and no AKS reads |
+| `python -m evaluation.run --mode hosted` | Foundry endpoint, hosted runtime, identity and model inference | Dataset evidence; no AKS reads |
+| `python -m evaluation.run --mode hosted --live` | Hosted runtime plus configured external collectors | No fixture evidence is sent; case expectations still need human comparison to current conditions |
 
 The historical healthy and readiness-fault cases came from the archive. Grader
 reference, rubric and provenance remain in the evaluator; the model receives only
@@ -115,14 +134,14 @@ credential (local Azure CLI is one option) and supply the current project endpoi
 
 ```sh
 export FOUNDRY_PROJECT_ENDPOINT='https://<account>.services.ai.azure.com/api/projects/<project>'
-.venv/bin/python evaluate.py evals/readiness-fault.yaml --mode model
+.venv/bin/python -m evaluation.run evaluation/cases/readiness-fault.yaml --mode model
 ```
 
 After deployment, inspect the agent with native `azd ai agent show`. Use its exact
 Invocations endpoint and record the returned deployed agent/version in the report:
 
 ```sh
-.venv/bin/python evaluate.py evals/readiness-fault.yaml \
+.venv/bin/python -m evaluation.run evaluation/cases/readiness-fault.yaml \
   --mode hosted --endpoint "$INVOCATIONS_ENDPOINT"
 ```
 
@@ -230,11 +249,10 @@ its own Dockerfile and locked dependencies. The existing workflow discovers it.
 This PR deliberately keeps the pieces visible together; it does not claim the
 runtime has already been extracted into a centrally consumed library.
 
-The archive is a source reference, not a runtime dependency. `runtime.py` adapts
-its `model.py` and bounded replay loop; `tools.py` adapts `diagnostics.py` and the
-triage guard; `server.py` retains the official adapter approach. Cases retain
-source provenance. The custom manifest loader/publisher, Helm charts, AKS broker,
-event sensors and coding workers are not restored.
+The archive is a source reference, not a runtime dependency. `runtime/agent.py` adapts
+its `model.py` and bounded replay loop; `tools/diagnostics.py` adapts `diagnostics.py` and the
+triage guard; `hosting/server.py` retains the official adapter approach. Cases retain
+source provenance. The archive remains available for the original implementation history.
 
 Sources: [archived source map](https://github.com/sre-agent-foundry),
 [Microsoft runtime contract](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agent-contract),

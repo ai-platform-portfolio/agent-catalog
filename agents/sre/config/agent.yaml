@@ -1,4 +1,4 @@
-# Replace this behaviour and tools.py for another case study; runtime.py stays unchanged.
+# Replace this behaviour and tools/diagnostics.py for another case study; runtime/agent.py stays unchanged.
 model: chat
 reasoning_effort: medium
 

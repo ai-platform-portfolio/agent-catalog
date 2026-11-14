@@ -2,4 +2,4 @@
 .venv/
 __pycache__/
 *.pyc
-agents/*/evals/results/
+agents/*/evaluation/results/

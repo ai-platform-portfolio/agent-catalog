@@ -8,8 +8,8 @@ from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.identity import DefaultAzureCredential
 from starlette.responses import JSONResponse
 
-from runtime import load_config, model_client, run
-from tools import KubernetesTools, ProvidedTools, live_clients, validate_diagnosis
+from runtime.agent import load_config, model_client, run
+from tools.diagnostics import KubernetesTools, ProvidedTools, live_clients, validate_diagnosis
 
 
 def investigate(payload, config, client, live=None):

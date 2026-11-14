@@ -9,10 +9,10 @@ from unittest.mock import Mock, patch
 import httpx
 from starlette.testclient import TestClient
 
-from evaluate import load_case, score
-from runtime import load_config, model_client, run
-from server import build_app, investigate
-from tools import EntraAuth, KubernetesTools, ProvidedTools, bounded_get, validate_diagnosis
+from evaluation.run import load_case, score
+from runtime.agent import load_config, model_client, run
+from hosting.server import build_app, investigate
+from tools.diagnostics import EntraAuth, KubernetesTools, ProvidedTools, bounded_get, validate_diagnosis
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,7 +47,7 @@ class Model:
 
 class AgentTests(unittest.TestCase):
     def test_complete_fault_investigation_uses_one_loop_and_withholds_grader(self):
-        case, payload = load_case(ROOT / 'evals/readiness-fault.yaml')
+        case, payload = load_case(ROOT / 'evaluation/cases/readiness-fault.yaml')
         model = Model(['workload_state', 'recent_events', 'bounded_logs'], 'actionable')
         result = investigate(payload, load_config(), model)
         self.assertEqual(result['evidence_source'], 'caller_provided')
@@ -62,7 +62,7 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(all(not request['store'] for request in model.requests))
 
     def test_healthy_and_no_evidence_cases_abstain(self):
-        _, payload = load_case(ROOT / 'evals/healthy.yaml')
+        _, payload = load_case(ROOT / 'evaluation/cases/healthy.yaml')
         healthy = investigate(payload, load_config(), Model(['workload_state']))
         self.assertEqual(healthy['diagnosis']['decision'], 'abstain')
         model = Model()
@@ -71,7 +71,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result['tool_calls'], [])
 
     def test_actionable_claim_requires_the_observed_fault(self):
-        _, payload = load_case(ROOT / 'evals/healthy.yaml')
+        _, payload = load_case(ROOT / 'evaluation/cases/healthy.yaml')
         with self.assertRaisesRegex(ValueError, 'degraded readiness'):
             investigate(payload, load_config(), Model(['workload_state', 'recent_events'], 'actionable'))
         result = {'diagnosis': {'decision': 'abstain', 'answer': 'Need more verified evidence for a diagnosis.',
@@ -107,7 +107,7 @@ class AgentTests(unittest.TestCase):
     def test_model_endpoint_and_identity_are_injected_without_a_secret(self):
         credential = Mock(spec=['get_token'])
         credential.get_token.return_value = SimpleNamespace(token='short-lived-test-token', expires_on=time.time() + 3600)
-        with patch('runtime.OpenAI') as constructor:
+        with patch('runtime.agent.OpenAI') as constructor:
             model_client(credential, 'https://example.services.ai.azure.com/api/projects/demo')
             self.assertEqual(constructor.call_args.kwargs['base_url'],
                              'https://example.services.ai.azure.com/api/projects/demo/openai/v1/')

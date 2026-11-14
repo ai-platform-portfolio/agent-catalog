@@ -1,7 +1,6 @@
 """Template: configuration, model injection and a bounded model/tool loop.
 
-Adapted from sre-agent-foundry's model.py and evaluation.py. No AKS or SRE API
-belongs here: tools and case-specific result validation are supplied by the caller.
+Adapted from sre-agent-foundry's model.py and evaluation.py. Tools and case-specific result validation are supplied by the caller.
 """
 import json
 import os
@@ -16,7 +15,7 @@ import yaml
 
 
 def load_config():
-    config = yaml.safe_load(Path(__file__).with_name('agent.yaml').read_text())
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] / 'config' / 'agent.yaml').read_text())
     if not config.get('model') or not config.get('instructions'):
         raise ValueError('Agent needs a model deployment and instructions')
     for key, ceiling in [('model_requests', 8), ('tool_calls', 12)]:

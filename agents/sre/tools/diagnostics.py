@@ -1,7 +1,6 @@
 """SRE case study: archived read-only collectors with external Entra authentication.
 
-The hosting runtime is independent of these APIs. No service-account token,
-Kubernetes client executable or AKS Job is needed in the Foundry container.
+Collects bounded workload evidence and validates the SRE diagnosis.
 """
 import json
 import os

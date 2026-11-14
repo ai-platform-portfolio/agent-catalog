@@ -8,9 +8,9 @@ from azure.identity import DefaultAzureCredential
 import httpx
 import yaml
 
-from runtime import load_config, model_client
-from server import investigate
-from tools import https_url
+from runtime.agent import load_config, model_client
+from hosting.server import investigate
+from tools.diagnostics import https_url
 
 
 def load_case(path):
