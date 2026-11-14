@@ -2,6 +2,11 @@ repository: ai-platform-portfolio/preview-environments
 base_ref: main
 editable_paths: [deploy/, tests/]
 context_paths: [deploy/, tests/, backend/]
+
+required_evidence:
+  source: live_kubernetes
+  tools: [workload_state, recent_events]
+
 checks:
   - [python, -m, unittest, discover, -s, tests, -p, test_readiness_contract.py]
 instructions: >-
