@@ -17,6 +17,12 @@ from tools.diagnostics import EntraAuth, KubernetesTools, ProvidedTools, bounded
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def local_config():
+    config = load_config()
+    config['memory']['enabled'] = False
+    return config
+
+
 class Call:
     type = 'function_call'
     arguments = '{}'
@@ -194,7 +200,7 @@ class AgentTests(unittest.TestCase):
     def test_transport_failures_are_sanitized_at_the_protocol_boundary(self):
         model = Model()
         with patch.object(model, 'create', side_effect=RuntimeError('private credential detail')):
-            with TestClient(build_app(client=model, configure_observability=None)) as client:
+            with TestClient(build_app(client=model, config=local_config(), configure_observability=None)) as client:
                 response = client.post('/invocations', json={'incident': {'summary': 'fault'}})
                 self.assertEqual(response.status_code, 502)
                 self.assertNotIn('private credential detail', response.text)
@@ -210,14 +216,29 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(request.headers['Authorization'], 'Bearer temporary-token')
         credential.get_token.assert_called_once_with('test-scope/.default')
 
-    def test_live_mode_cannot_accept_recorded_evidence(self):
-        with self.assertRaises(ValueError):
-            investigate({'incident': {'summary': 'fault'}, 'evidence': {}}, load_config(), Model(),
-                        live=(Mock(), None, 'approved'))
+    def test_live_configuration_replays_without_live_provenance_or_collector_calls(self):
+        api = Mock()
+        _, payload = load_case(ROOT / 'evaluation/cases/healthy.yaml')
+        result = investigate(payload, load_config(), Model(['workload_state']), live=(api, None, 'approved'))
+        self.assertEqual(result['evidence_source'], 'caller_provided')
+        self.assertEqual(api.mock_calls, [])
+
+    def test_recorded_http_evaluation_bypasses_enabled_memory(self):
+        from unittest.mock import AsyncMock
+        _, payload = load_case(ROOT / 'evaluation/cases/healthy.yaml')
+        with patch.dict('os.environ', {'DIAGNOSTICS_BACKEND': 'provided',
+                                       'FOUNDRY_PROJECT_ENDPOINT': 'https://example.test/api/projects/test'}):
+            with patch('azure.ai.projects.AIProjectClient'), patch(
+                    'portfolio_agent_runtime.hosting.invoke', new_callable=AsyncMock) as persistent:
+                with TestClient(build_app(client=Model(['workload_state']), configure_observability=None)) as client:
+                    response = client.post('/invocations', json=payload)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json()['evidence_source'], 'caller_provided')
+                persistent.assert_not_awaited()
 
     def test_official_protocol_adapter_serves_health_and_invocation(self):
         with patch.dict('os.environ', {'DIAGNOSTICS_BACKEND': 'provided'}):
-            with TestClient(build_app(client=Model(), configure_observability=None)) as client:
+            with TestClient(build_app(client=Model(), config=local_config(), configure_observability=None)) as client:
                 self.assertEqual(client.get('/readiness').status_code, 200)
                 response = client.post('/invocations', json={'incident': {'summary': 'No evidence attached'}})
                 self.assertEqual(response.status_code, 200, response.text)

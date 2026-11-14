@@ -207,6 +207,10 @@ jobs:
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           # Optional case-study inputs stay at repository level, never org-wide.
+          MODEL_BASE_URL: ${{ vars.MODEL_BASE_URL }}
+          MODEL_TOKEN_SCOPE: ${{ vars.MODEL_TOKEN_SCOPE }}
+          METRICS_URL: ${{ vars.METRICS_URL }}
+          METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
           AGENT_DIAGNOSTICS_BACKEND: ${{ vars.AGENT_DIAGNOSTICS_BACKEND || 'provided' }}
           KUBE_API_URL: ${{ vars.KUBE_API_URL }}
           KUBE_CA_PEM: ${{ vars.KUBE_CA_PEM }}

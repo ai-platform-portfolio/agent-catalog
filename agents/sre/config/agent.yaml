@@ -47,9 +47,8 @@ response_schema:
   required: [decision, answer, evidence, citations]
   additionalProperties: false
 
-# Activation is held until the shared agent-runtime release is pinned in this PR.
 memory:
-  enabled: false
+  enabled: true
   retention_days: 30
 
 knowledge:

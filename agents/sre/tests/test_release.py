@@ -18,7 +18,7 @@ from evaluation.release import route, validate_evidence
 from evaluation.run import candidate_request, load_case, score
 from hosting.server import investigate
 from runtime.agent import load_config
-from test_agent import Model
+from test_agent import Model, local_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,7 +45,7 @@ from types import SimpleNamespace
 from telemetry.tracing import shutdown
 from hosting.server import build_app, investigate
 from runtime.agent import load_config
-from test_agent import Model
+from test_agent import Model, local_config
 model = Model()
 original = model.create
 def create(**request):
@@ -55,7 +55,7 @@ def create(**request):
     return response
 model.create = create
 started = time.monotonic()
-app = build_app(client=model)
+app = build_app(client=model, config=local_config())
 assert time.monotonic() - started < 1, 'export blocked startup'
 started = time.monotonic()
 result = investigate({'incident': {'summary': 'private-prompt-never-export'}}, load_config(), model)
@@ -108,6 +108,11 @@ class ReleaseTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         (self.root / 'release.json').write_text(json.dumps(self.release))
+        (self.root / 'context.json').write_text(json.dumps({'version': '7', 'checks': {
+            'recall_in_new_session': True, 'checkpoint_in_new_session': True,
+            'forget_memory': True, 'forget_checkpoint': True}}))
+        (self.root / 'knowledge.json').write_text(json.dumps({
+            'revision': self.release['source_revision'], 'sources': [{'file_id': 'file-reviewed'}]}))
         for path in Path('evaluation/cases').glob('*.yaml'):
             case, payload = load_case(path)
             calls = case['rubric'].get('automated', {}).get('required_tools', [])

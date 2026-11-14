@@ -15,11 +15,10 @@ services:
     language: docker
     image: ${HOSTED_AGENT_IMAGE}
 
-    # Enable with the shared agent-runtime pin when this draft is completed:
-    # hooks:
-    #   predeploy:
-    #     shell: sh
-    #     run: python -m portfolio_agent_runtime.deployment config/agent.yaml
+    hooks:
+      predeploy:
+        shell: sh
+        run: python -m portfolio_agent_runtime.deployment config/agent.yaml
 
     metadata:
       source_revision: ${SOURCE_REVISION}
@@ -41,17 +40,18 @@ services:
 
     env:
       MODEL_DEPLOYMENT_NAME: chat
-      # Supplied by the native predeploy hook when durable context is activated.
-      # MEMORY_STORE_NAME: ${MEMORY_STORE_NAME}
-      # KNOWLEDGE_MANIFEST_JSON: ${KNOWLEDGE_MANIFEST_JSON}
+      MODEL_BASE_URL: ${MODEL_BASE_URL}
+      MODEL_TOKEN_SCOPE: ${MODEL_TOKEN_SCOPE}
+      MEMORY_STORE_NAME: ${MEMORY_STORE_NAME}
+      KNOWLEDGE_MANIFEST_JSON: ${KNOWLEDGE_MANIFEST_JSON}
       PYTHONNOUSERSITE: "1"
-      DIAGNOSTICS_BACKEND: provided
-      # Activated with the predeploy hook and explicit repository-level inputs:
-      # DIAGNOSTICS_BACKEND: ${AGENT_DIAGNOSTICS_BACKEND}
-      # KUBE_API_URL: ${KUBE_API_URL}
-      # KUBE_CA_PEM: ${KUBE_CA_PEM}
-      # KUBE_ALLOWED_NAMESPACE: ${KUBE_ALLOWED_NAMESPACE}
-      # KUBE_ALLOWED_WORKLOAD: ${KUBE_ALLOWED_WORKLOAD}
+      DIAGNOSTICS_BACKEND: ${AGENT_DIAGNOSTICS_BACKEND}
+      KUBE_API_URL: ${KUBE_API_URL}
+      KUBE_CA_PEM: ${KUBE_CA_PEM}
+      KUBE_ALLOWED_NAMESPACE: ${KUBE_ALLOWED_NAMESPACE}
+      KUBE_ALLOWED_WORKLOAD: ${KUBE_ALLOWED_WORKLOAD}
+      METRICS_URL: ${METRICS_URL}
+      METRICS_TOKEN_SCOPE: ${METRICS_TOKEN_SCOPE}
       SOURCE_REVISION: ${SOURCE_REVISION}
       RELEASE_IMAGE: ${RELEASE_IMAGE}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${AGENT_TRACES_ENDPOINT}

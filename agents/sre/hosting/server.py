@@ -16,13 +16,15 @@ from tools.diagnostics import KubernetesTools, ProvidedTools, live_clients, vali
 def investigate(payload, config, client, live=None, historical_context=None):
     if not isinstance(payload, dict) or not {'incident'} <= payload.keys() <= {'incident', 'evidence'}:
         raise ValueError('Request needs incident and optional evidence only')
-    if live is not None:
-        if 'evidence' in payload:
-            raise ValueError('Caller evidence cannot override the configured live collectors')
+    if 'evidence' in payload:
+        # Replays stay explicitly caller-provided, bypass persistence and cannot
+        # satisfy the live-evidence guard used by the coding handoff.
+        tools = ProvidedTools(payload['evidence'])
+    elif live is not None:
         api, metrics, namespace = live
         tools = KubernetesTools(api, namespace, metrics)
     else:
-        tools = ProvidedTools(payload.get('evidence', {}))
+        tools = ProvidedTools({})
     result, evidence = run(payload['incident'], config, client, tools, historical_context)
     return validate_diagnosis(result, evidence, historical_context)
 

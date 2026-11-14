@@ -364,10 +364,11 @@ flowchart LR
 | Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
 
 **This PR remains draft until the shared runtime is released and its actual wheel
-URL/SHA256 is pinned.** No placeholder dependency is checked in. Memory activation,
-its native predeploy hook and the additional runtime environment fields are held
-alongside that pin. The final image is tested separately with the actual locally
-built wheel; that is not a published-release or live-deployment claim.
+URL/SHA256 is pinned.** No placeholder dependency is checked in. Memory, its native
+predeploy hook and its runtime environment fields are enabled in the implementation.
+The missing published dependency still blocks merging and building the production
+image. A prior image was tested with a locally built wheel; it predates these final
+activation changes and is not published-release or live-deployment evidence.
 
 The developer intent for memory is `memory.enabled: true`,
 `memory.retention_days: 30`, and `knowledge.path: knowledge`. Only reviewed public
