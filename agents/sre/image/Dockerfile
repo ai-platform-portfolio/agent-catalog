@@ -8,7 +8,7 @@ WORKDIR /app
 
 FROM base AS build
 
-COPY requirements.txt ./
+COPY image/requirements.txt ./
 RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.txt
 
 COPY config ./config

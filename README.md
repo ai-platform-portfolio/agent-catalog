@@ -15,8 +15,8 @@ Local tests do not establish a successful hosted deployment or live AKS access.
 agents/sre/
 ├── azure.yaml              Foundry deployment definition
 ├── image/
-│   └── Dockerfile          Container build and startup
-├── requirements.txt        Pinned direct/transitive dependencies and hashes
+│   ├── Dockerfile          Container build and startup
+│   └── requirements.txt    Pinned direct/transitive dependencies and hashes
 ├── config/
 │   └── agent.yaml          Instructions, model, budgets and response schema
 ├── runtime/
@@ -64,7 +64,7 @@ flowchart LR
 | Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
 | Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
-| Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [requirements.txt](agents/sre/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
+| Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [image/requirements.txt](agents/sre/image/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
 
 `azure.yaml` describes hosting. `config/agent.yaml` describes behaviour. `runtime/agent.py`
@@ -112,7 +112,7 @@ From `agents/sre`:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install --require-hashes --only-binary=:all: -r requirements.txt
+.venv/bin/pip install --require-hashes --only-binary=:all: -r image/requirements.txt
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
@@ -201,7 +201,7 @@ musl rather than glibc: binary-wheel installation, SDK/HTTP tests and amd64 imag
 checks cover that compatibility boundary; hosted inference remains a live gate.
 Its digest-pinned Python base and hashed dependencies are reproducible inputs;
 security updates require updating the package/base pins and rebuilding.
-`requirements.txt` is the single dependency list: direct and transitive packages
+`image/requirements.txt` is the single dependency list: direct and transitive packages
 are pinned and hashed together. When updating a version, resolve compatible pins
 and regenerate hashes into a temporary file before replacing this list. There is
 no second dependency declaration to synchronise. Builds require binary wheels so
