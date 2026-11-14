@@ -67,7 +67,7 @@ flowchart LR
 | HTTP protocol and health | [hosting/server.py](agents/sre/hosting/server.py), official Invocations adapter | Routes the public authenticated endpoint to port 8088; the adapter supplies `/readiness`, shutdown and tracing integration. |
 | Behaviour and model selection | [config/agent.yaml](agents/sre/config/agent.yaml), `MODEL_DEPLOYMENT_NAME` | Instructions and tool definitions are **inside the container**, sent with model requests; they are not separate portal prompt-agent resources. |
 | Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
-| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
+| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | The shared runtime executes in the hosted container. Conversation/evidence are request-local; authenticated live invocations also use native memory, historical knowledge and bounded checkpoints. Recorded evaluations bypass those stores. |
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
 | Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [image/requirements.txt](agents/sre/image/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
@@ -110,7 +110,9 @@ wait. This is a small concurrency bound, not a measured autoscaling configuratio
 
 The SRE check requires workload and event evidence plus degraded readiness before
 accepting `actionable`. It does not establish that a proposed diagnosis is correct.
-The returned decision never triggers a deployment, patch or draft PR.
+An ordinary investigation response publishes no changes. The separate event
+workflow can pass an actionable live diagnosis into proposal, isolated validation
+and draft publication under the trusted coding policy. It never merges or deploys.
 
 ## Run and evaluate
 
@@ -241,8 +243,8 @@ existing project service; it is not redefined in the container environment becau
 Foundry injects that reserved value. The endpoint requires Entra authorization.
 
 Foundry versions a container definition, not each Python function separately.
-There are no managed connections, routines, skills, memory stores or toolboxes in
-this template. Operational spans cover investigations/model/tool calls;
+The native predeploy hook configures the memory store and publishes reviewed
+knowledge into a revision-specific file-search toolbox. Operational spans cover investigations/model/tool calls;
 message-content capture is explicitly disabled. Export has not been live-verified.
 Logs and redaction remain sensitive; common credential masking is not a DLP guarantee.
 
@@ -317,11 +319,12 @@ functions and case-specific result validation, then supply independent evaluatio
 cases. A new agent directory must use its directory name as the `azure.yaml`
 service key, preserve `${AZURE_ENV_NAME}` for repository/agent identity, and provide
 its own `image/Dockerfile` and pinned dependencies. The existing workflow discovers it.
-This PR deliberately keeps the pieces visible together; it does not claim the
-runtime has already been extracted into a centrally consumed library.
+The model/tool loop, evaluation contracts, native context and coding functions
+are consumed from the released shared runtime wheel. Agent configuration, tools,
+case-specific validation and workflow composition stay in this repository.
 
-The archive is a source reference, not a runtime dependency. `runtime/agent.py` adapts
-its `model.py` and bounded replay loop; `tools/diagnostics.py` adapts `diagnostics.py` and the
+The archive is a source reference, not a runtime dependency. `runtime/agent.py` binds
+the shared model client and bounded loop; `tools/diagnostics.py` retains diagnostic collection and the
 triage guard; `hosting/server.py` retains the official adapter approach. Cases retain
 source provenance. The archive remains available for the original implementation history.
 
@@ -363,12 +366,11 @@ flowchart LR
 | Scalar native invocation and scoped App token actions | `ops-shared` |
 | Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
 
-**This PR remains draft until the shared runtime is released and its actual wheel
-URL/SHA256 is pinned.** No placeholder dependency is checked in. Memory, its native
-predeploy hook and its runtime environment fields are enabled in the implementation.
-The missing published dependency still blocks merging and building the production
-image. A prior image was tested with a locally built wheel; it predates these final
-activation changes and is not published-release or live-deployment evidence.
+The released `portfolio-agent-runtime` 0.1.0 wheel is pinned by its actual release
+URL and SHA256 in `image/requirements.txt`. Its bytes match the attached checksums,
+GitHub asset digest and merged library sources. Memory, the native predeploy hook
+and runtime environment fields are enabled in source. Image-build evidence and
+hosted acceptance are separate: publication of a wheel does not prove deployment.
 
 The developer intent for memory is `memory.enabled: true`,
 `memory.retention_days: 30`, and `knowledge.path: knowledge`. Only reviewed public
