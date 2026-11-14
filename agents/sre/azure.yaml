@@ -1,0 +1,36 @@
+# Existing project/model: this file deploys an agent, not another infrastructure stack.
+name: sre
+
+services:
+  foundry:
+    host: azure.ai.project
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
+
+  sre:
+    host: azure.ai.agent
+    uses: [foundry]
+    kind: hosted
+    name: ${AZURE_ENV_NAME}
+    project: .
+    language: docker
+    image: ${HOSTED_AGENT_IMAGE}
+
+    docker:
+      path: image/Dockerfile
+      context: .
+      remoteBuild: true
+
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+
+    agentEndpoint:
+      protocols: [invocations]
+      authorizationSchemes:
+        - type: Entra
+
+    env:
+      MODEL_DEPLOYMENT_NAME: chat
+      PYTHONNOUSERSITE: "1"
+      DIAGNOSTICS_BACKEND: provided
+      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "false"
