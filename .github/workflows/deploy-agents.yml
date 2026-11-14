@@ -29,6 +29,23 @@ on:
         description: Successful main deployment run containing that version's evaluation artifacts.
         type: string
 
+      expected-serving-version:
+        description: Exact current serving version reviewed for this route change.
+        type: string
+
+      review-approved:
+        description: Confirm that the evaluation and human rubric have been reviewed and approved.
+        type: boolean
+        default: false
+
+      review-url:
+        description: HTTPS reference to the approval review.
+        type: string
+
+      rollback-reason:
+        description: Required reason for rollback (10-2048 characters).
+        type: string
+
 permissions:
   contents: read
 
@@ -167,7 +184,7 @@ jobs:
 
       - name: Deploy prebuilt digest with native azd
         id: candidate
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@9de9412c8f07996b24692a9291ebb49ed3f84ea7
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@575a43ffdbf4ec135ee1cfdf35b00805b083fcd6
         with:
           service: ${{ matrix.agent }}
           image: ${{ steps.image.outputs.image }}
@@ -291,6 +308,11 @@ jobs:
           VERSION: ${{ inputs.version }}
           AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
           EXPECTED_REVISION: ${{ steps.evidence.outputs.revision }}
+          EXPECTED_SERVING_VERSION: ${{ inputs.expected-serving-version }}
+          REVIEW_APPROVED: ${{ inputs.review-approved }}
+          REVIEW_URL: ${{ inputs.review-url }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          ROLLBACK_REASON: ${{ inputs.rollback-reason }}
         run: |
           python3 -m venv "$RUNNER_TEMP/evaluation-venv"
           "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt

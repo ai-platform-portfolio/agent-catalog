@@ -330,3 +330,44 @@ Sources: [archived source map](https://github.com/sre-agent-foundry),
 [native azure.yaml](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
 [deployment and identity](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
 [protocol adapter](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-protocol-adapter).
+
+## Full-restoration milestone (AI-245, in progress)
+
+This draft restores the archived third Foundry private-endpoint replay (version 2),
+all six automated checks, model base-URL/token-scope injection, explicit review
+reference, expected serving version and rollback reason. The six Azure fixture
+tools remain replay-only; live Kubernetes collectors cannot execute them. An
+`actionable` decision still means readiness evidence is eligible for the narrow
+coding handoff; an Azure ownership diagnosis remains read-only advice.
+
+The shared `application-library/agent-runtime` package implements native Foundry
+state, managed memory, file-search publication and the archived coding functions.
+The catalog composition is staged behind `memory.enabled: false`. **This draft is
+not ready to merge or test end-to-end.** It still needs the real released wheel and
+hash, activation of the native predeploy hook/environment fields, and hosted
+acceptance. There is no placeholder dependency or claim that memory is running.
+
+The intended developer values are:
+
+```yaml
+memory:
+  enabled: true
+  retention_days: 30
+
+knowledge:
+  path: knowledge
+```
+
+State/checkpoints and explicit remember/recall/forget commands are private to the
+Foundry-authenticated user's scope. Only reviewed public runbooks enter the
+project-shared toolbox. Recorded evaluation evidence bypasses all persistence.
+Historical context stays separate from current diagnostic evidence and cannot
+satisfy readiness/handoff guards. See the shared package's retention, review and
+preview limitations before enabling it.
+
+Remaining acceptance includes live read-only collector authorization, native
+readiness-event intake with UID deduplication/rate limiting, isolated
+fetch/Foundry-propose/test/draft-PR orchestration, actual memory restart/isolation/
+forget behavior, citations, telemetry and revision-specific release/rollback.
+Restoring coding functions alone does not deliver that orchestration. No agent or
+coding job will be restored on AKS. No new networking is authorized by this draft.

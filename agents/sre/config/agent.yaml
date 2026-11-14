@@ -6,7 +6,17 @@ limits:
   model_requests: 8
   tool_calls: 12
 
-tools: [workload_state, recent_events, bounded_logs, service_metrics]
+tools:
+  - workload_state
+  - recent_events
+  - bounded_logs
+  - service_metrics
+  - get_foundry_account
+  - get_model_deployment
+  - get_private_endpoint
+  - get_private_dns
+  - get_terraform_reconciliation
+  - inspect_foundry_module
 
 instructions: >-
   You are a read-only SRE investigator. Separate observations from inference,
@@ -31,3 +41,11 @@ response_schema:
       items: {type: string}
   required: [decision, answer, evidence]
   additionalProperties: false
+
+# Activation is held until the shared agent-runtime release is pinned in this PR.
+memory:
+  enabled: false
+  retention_days: 30
+
+knowledge:
+  path: knowledge

@@ -110,7 +110,9 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'release.json').write_text(json.dumps(self.release))
         for path in Path('evaluation/cases').glob('*.yaml'):
             case, payload = load_case(path)
-            calls = ['workload_state', 'recent_events', 'bounded_logs'] if path.stem == 'readiness-fault' else ['workload_state']
+            calls = case['rubric'].get('automated', {}).get('required_tools', [])
+            if path.stem == 'readiness-fault':
+                calls = ['workload_state', 'recent_events', 'bounded_logs']
             result = investigate(payload, load_config(), Model(calls, 'actionable' if path.stem == 'readiness-fault' else 'abstain'))
             result.update(trace_id='c' * 32, deployment=self.release)
             report = score(case, result, load_config())
@@ -132,7 +134,9 @@ class ReleaseTests(unittest.TestCase):
     def test_promotion_and_rollback_preserve_auth_and_verify_route_readback(self):
         (self.root / 'azure.yaml').write_text((ROOT / 'azure.yaml').read_text())
         os.chdir(self.root)
-        endpoint = {'protocol_configuration': {'invocations': {}}, 'authorization_schemes': [{'type': 'Entra'}]}
+        endpoint = {'protocol_configuration': {'invocations': {}}, 'authorization_schemes': [{'type': 'Entra'}],
+                    'version_selector': {'version_selection_rules': [
+                        {'type': 'FixedRatio', 'agent_version': '6', 'traffic_percentage': 100}]}}
         after = copy.deepcopy(endpoint)
         after['version_selector'] = {'version_selection_rules': [
             {'type': 'FixedRatio', 'agent_version': '7', 'traffic_percentage': 100}]}
@@ -144,10 +148,12 @@ class ReleaseTests(unittest.TestCase):
                     'evaluation.release.azd', side_effect=['', json.dumps(current), json.dumps({'agent_endpoint': endpoint}),
                                                          '', json.dumps({'agent_endpoint': observed})]):
                 if observed == after:
-                    route('sre', '7', self.root)
+                    route('sre', '7', self.root, expected_version='6',
+                          review={'approved': True, 'url': 'https://example.test/review'})
                 else:
                     with self.assertRaisesRegex(ValueError, 'verified'):
-                        route('sre', '7', self.root)
+                        route('sre', '7', self.root, expected_version='6',
+                          review={'approved': True, 'url': 'https://example.test/review'})
         declaration = yaml.safe_load((self.root / 'azure.yaml').read_text())['services']['sre']
         self.assertEqual(declaration['agentEndpoint']['authorizationSchemes'], [{'type': 'Entra'}])
 

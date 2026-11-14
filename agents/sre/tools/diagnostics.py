@@ -11,6 +11,12 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 TOOL_DESCRIPTIONS = {
+    'get_foundry_account': 'Read recorded Foundry account state and public inference evidence.',
+    'get_model_deployment': 'Read recorded model deployment configuration and state.',
+    'get_private_endpoint': 'Read recorded private endpoint and connection state.',
+    'get_private_dns': 'Read recorded private DNS records and zone group state.',
+    'get_terraform_reconciliation': 'Read recorded Terraform reconciliation evidence.',
+    'inspect_foundry_module': 'Read recorded Foundry module ownership and replacement wiring.',
     'workload_state': 'Read the approved workload and its selected Pods, including readiness and restart state.',
     'recent_events': 'Read bounded recent Kubernetes events for the approved workload.',
     'bounded_logs': 'Read at most 8 KiB of recent logs from one selected target Pod.',
@@ -88,7 +94,9 @@ class KubernetesTools:
     def __init__(self, api_client, allowed_namespace, metrics_client=None):
         self.api, self.metrics = api_client, metrics_client
         self.allowed_namespace = allowed_namespace
-        self.names = [name for name in TOOL_DESCRIPTIONS if name != 'service_metrics' or metrics_client]
+        self.names = ['workload_state', 'recent_events', 'bounded_logs']
+        if metrics_client is not None:
+            self.names.append('service_metrics')
 
     def _get(self, path, params=None):
         return json.loads(bounded_get(self.api, path, params))

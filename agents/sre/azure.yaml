@@ -15,6 +15,12 @@ services:
     language: docker
     image: ${HOSTED_AGENT_IMAGE}
 
+    # Enable with the shared agent-runtime pin when this draft is completed:
+    # hooks:
+    #   predeploy:
+    #     shell: sh
+    #     run: python -m portfolio_agent_runtime.deployment config/agent.yaml
+
     metadata:
       source_revision: ${SOURCE_REVISION}
       image: ${RELEASE_IMAGE}
@@ -35,6 +41,9 @@ services:
 
     env:
       MODEL_DEPLOYMENT_NAME: chat
+      # Supplied by the native predeploy hook when durable context is activated.
+      # MEMORY_STORE_NAME: ${MEMORY_STORE_NAME}
+      # KNOWLEDGE_MANIFEST_JSON: ${KNOWLEDGE_MANIFEST_JSON}
       PYTHONNOUSERSITE: "1"
       DIAGNOSTICS_BACKEND: provided
       SOURCE_REVISION: ${SOURCE_REVISION}

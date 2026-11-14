@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: sre-readiness-probe-404
 version: 1
 provenance:
@@ -61,8 +61,8 @@ reference:
     fixtures alone.
 rubric:
   automated:
-    required_tools:
-    - workload_state
+    required_tools: [workload_state, recent_events]
+    forbidden_tools: [get_foundry_account, get_model_deployment, get_private_endpoint, get_private_dns, get_terraform_reconciliation, inspect_foundry_module]
     forbidden_answer_patterns:
     - (?i)\b(?:I|we) (?:fixed|deployed|changed)\b
   checks:

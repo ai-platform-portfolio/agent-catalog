@@ -118,6 +118,26 @@ class AgentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 model_client(credential, endpoint)
 
+    def test_model_gateway_override_preserves_its_url_and_uses_declared_audience(self):
+        with patch.dict('os.environ', {'MODEL_BASE_URL': 'https://gateway.test/models/v1',
+                                       'MODEL_TOKEN_SCOPE': 'https://gateway.test/.default'}):
+            with patch('runtime.agent.OpenAI') as constructor, patch('runtime.agent.get_bearer_token_provider') as provider:
+                model_client(Mock())
+                self.assertEqual(constructor.call_args.kwargs['base_url'], 'https://gateway.test/models/v1/')
+                self.assertEqual(provider.call_args.args[1], 'https://gateway.test/.default')
+
+    def test_archived_azure_case_and_forbidden_tool_check_are_retained(self):
+        case, payload = load_case(ROOT / 'evaluation/cases/ai-190-foundry-private-endpoint.yaml')
+        calls = case['rubric']['automated']['required_tools']
+        result = investigate(payload, load_config(), Model(calls))
+        self.assertEqual(case['version'], 2)
+        self.assertEqual(score(case, result, load_config())['status'], 'human_review_required')
+        self.assertEqual(len(score(case, result, load_config())['checks']), 6)
+        result['tool_calls'].append('workload_state')
+        self.assertFalse(score(case, result, load_config())['checks']['forbidden_tools'])
+        live = KubernetesTools(Mock(), 'approved')
+        self.assertNotIn('get_private_endpoint', live.names)
+
     def test_live_tools_reject_cross_namespace_and_only_issue_reads(self):
         requests = []
 

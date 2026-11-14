@@ -35,6 +35,7 @@ def score(case, result, config):
     automated = case['rubric'].get('automated', {})
     checks = {
         'required_tools': set(automated.get('required_tools', [])) <= set(result['tool_calls']),
+        'forbidden_tools': not (set(automated.get('forbidden_tools', [])) & set(result['tool_calls'])),
         'known_tools': set(result['tool_calls']) <= set(config['tools']),
         'tool_budget': len(result['tool_calls']) <= config['limits']['tool_calls'],
         'request_budget': result['model_requests'] <= config['limits']['model_requests'],
@@ -43,7 +44,8 @@ def score(case, result, config):
     }
     return {'case': case['id'], 'case_version': case['version'], 'checks': checks,
             'status': 'human_review_required' if all(checks.values()) else 'failed',
-            'human_rubric': case['rubric'].get('checks', []), 'result': result}
+            'human_rubric': case['rubric'].get('checks', case['rubric'].get('criteria', [])),
+            'hard_failures': case['rubric'].get('hard_failures', []), 'result': result}
 
 
 def hosted_request(endpoint, payload, credential, session):
