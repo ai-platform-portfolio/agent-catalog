@@ -1,119 +1,243 @@
-# Agent catalog
+# Foundry agent template
 
-Agent source and native Microsoft Foundry deployment configuration. One GitHub
-workflow discovers agent projects and calls the shared Foundry action for each.
-The shared Docker workflow builds/pushes each image to the existing ACR and scans
-its digest. The native Foundry action then deploys that same digest through `azd`.
-There is no wrapper workflow, custom publisher, Helm, Argo or AKS dependency.
+A complete, inspectable agent hosted in **Microsoft Foundry**. SRE is the first
+case study: its instructions, tools and evaluation data can change without
+changing the bounded model/tool loop. AKS is only an optional investigation target.
+There is no agent, broker, publisher or coding worker running on AKS.
 
-The catalog is currently empty. The retired SRE runtime, diagnostic broker and
-coding workers remain archived in
-[sre-agent-foundry/agent-catalog](https://github.com/sre-agent-foundry/agent-catalog).
+The implementation is kept together in one review PR before extracting reusable
+pieces. The existing shared Docker workflow and native Foundry deployment action
+are already in use by the caller; this candidate adds their first actual agent.
+Local tests do not establish a successful hosted deployment or live AKS access.
 
-## Add an agent
-
-Add `agents/<name>/azure.yaml` and a Dockerfile alongside the agent source and
-dependency files.
-Names use lowercase letters, digits and hyphens; repository name plus agent name
-must fit 63 characters. Use the directory name as the native agent service key.
-New directories are discovered automatically; no workflow edit is needed.
-
-For example, a `researcher` container project could declare:
-
-```yaml
-name: researcher
-
-services:
-  foundry:
-    host: azure.ai.project
-    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
-
-  researcher:
-    host: azure.ai.agent
-    uses: [foundry]
-    kind: hosted
-    name: ${AZURE_ENV_NAME}
-    project: .
-    language: docker
-    image: ${HOSTED_AGENT_IMAGE}
-    docker:
-      remoteBuild: true
-    protocols:
-      - protocol: responses
-        version: 2.0.0
-    env:
-      PYTHONNOUSERSITE: "1"
-```
-
-The Dockerfile must serve the selected Foundry protocol and should use a hardened,
-pinned base with locked application dependencies and appropriate application test
-steps. Configure the model, resources and tools through native `azure.yaml` and
-code. `HOSTED_AGENT_IMAGE` comes from the verified build record. The shared action
-sets `AZD_AGENT_SKIP_ACR=true`; `docker.remoteBuild: true` makes the core package
-phase a no-op, and the extension consumes the prebuilt image without an ACR build.
-Do not use `codeConfiguration` on this prebuilt-container path. No custom
-`deployment.json` or `smoke.json` contract is required.
-
-## Delivery
-
-**Follow-up:** Review whether `.github/workflows/deploy-agents.yml` is the most
-efficient delivery approach, including matrix/job overhead and opportunities to
-simplify the per-agent artifact handoff.
+## Where each component lives
 
 ```mermaid
 flowchart LR
-    Discover[Discover agent directories] --> Build[Shared Docker build matrix]
-    Build --> ACR[Existing ACR]
-    ACR --> Scan[Trivy scan by digest]
-    Scan --> Record[Per-agent image record]
-    Record --> Deploy[Native Foundry deploy matrix]
-    Deploy --> Foundry[Foundry hosted agent]
+    Repo[Agent source and configuration] --> Build[Shared Docker workflow]
+    Build --> Image[ACR image pinned by digest]
+    Image --> Scan[Trivy release gate]
+    Scan --> Deploy[Shared native azd action]
+    Deploy --> Definition
+
+    subgraph Foundry[Microsoft Foundry]
+        Definition[Agent definition and version] --> Container[Hosted container]
+        Identity[Dedicated Entra agent identity] --> Container
+        Container --> Loop[Request handler and bounded agent loop]
+        Loop --> Model[Existing project model deployment]
+        Loop --> Tools[Read-only tool functions]
+        Loop --> Answer[Structured diagnosis and execution metadata]
+    end
+
+    Caller[Caller or online evaluator] --> Container
+    Evidence[Caller-provided recorded evidence] --> Tools
+    Tools -. Optional authenticated reads .-> AKS[AKS API and metrics gateway]
 ```
 
-PRs discover and build agents without publishing or Azure login. Main pushes and
-manual main runs publish images, scan each immutable digest and release an
-`image-<agent>` record only after success. HIGH or CRITICAL vulnerabilities fail
-the build job. The push precedes scanning: a rejected image remains in ACR but is
-not released to Foundry by this workflow. All builds must succeed before the
-batch deploys. Application-specific tests belong in each build or an explicit
-caller job; image signing is not implemented here.
+| Component | Definition / implementation | What Foundry does |
+| --- | --- | --- |
+| Project and model deployment | Existing bootstrap infrastructure; model alias `chat` | Hosts the project API and underlying model deployment. This PR creates neither. |
+| Agent definition/version | [azure.yaml](agents/sre/azure.yaml) | Registers the image, protocol, runtime environment and endpoint. No custom compute sizing is specified here. |
+| Runtime identity | Platform-created Entra agent identity | Gives the running agent its own identity; the GitHub publisher identity is separate. Extra external access requires explicit grants. |
+| HTTP protocol and health | [server.py](agents/sre/server.py), official Invocations adapter | Routes the public authenticated endpoint to port 8088; the adapter supplies `/readiness`, shutdown and tracing integration. |
+| Behaviour and model selection | [agent.yaml](agents/sre/agent.yaml), `MODEL_DEPLOYMENT_NAME` | Instructions and tool definitions are **inside the container**, sent with model requests; they are not separate portal prompt-agent resources. |
+| Model injection/authentication | [runtime.py](agents/sre/runtime.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
+| Agent loop and working state | [runtime.py](agents/sre/runtime.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
+| SRE tools and decision checks | [tools.py](agents/sre/tools.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
+| Image and dependencies | [Dockerfile](agents/sre/Dockerfile), [requirements.lock](agents/sre/requirements.lock) | Pulls the immutable amd64 image from ACR. Runtime contains no Docker, Helm, kubectl or grader files. |
+| Evaluation | [evaluate.py](agents/sre/evaluate.py), [cases](agents/sre/evals), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
 
-Both shared blocks remain scalar. The caller owns the build/deploy matrices,
-source checks and concurrency. Each deployment downloads its agent's record from
-the same workflow run and verifies repository, revision, image path and digest.
-It never consumes a last-writer matrix output as a digest map. Artifact overwrite
-supports build reruns; rerunning only deployment can reuse the successful build
-record while GitHub retains it. Missing records fail rather than falling back to
-a mutable tag. Up to four agents run per stage; each agent's deployment is
-serialized. A stale checkout/main revision fails before Azure login.
+`azure.yaml` describes hosting. `agent.yaml` describes behaviour. `runtime.py`
+provides execution. Keeping those responsibilities visible is the template's
+main purpose; adding a framework, plugin registry or custom deployment manifest
+would obscure this first review.
 
-The native Foundry action reuses installed `azd` or installs it when missing,
-ensures the extension, uses GitHub OIDC and prepares local context. Its image input
-is always `registry/path@sha256:...` from the build record; no second build is
-requested. Native environment names derive from repository and agent; use
-`${AZURE_ENV_NAME}` as the hosted-agent name. `.azure/` directories are ignored.
-An empty catalog safely skips both matrices.
+## Follow one request
 
-Set repository variables `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_LOCATION` to the
-operator-provided existing project endpoint and Azure region. The existing
-organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
-`AZURE_SUBSCRIPTION_ID` provide the federated identity contract. The current platform
-reuses `kubernetes-spn`; effective CI login and deployment still need live proof.
-Keep credentials and private configuration out of source and images.
+```mermaid
+sequenceDiagram
+    participant E as Caller or evaluator
+    participant H as Foundry hosted handler
+    participant M as Project model deployment
+    participant T as Read-only tool provider
+    E->>H: Incident and optional recorded evidence
+    H->>H: Validate size, mode and allowed fields
+    loop Within request and tool budgets
+        H->>M: Instructions, conversation and available tools
+        M-->>H: One tool call or structured answer
+        opt Tool requested
+            H->>H: Check allowlist, arguments and repeated calls
+            H->>T: Execute fixed read-only function
+            T-->>H: Bounded evidence
+            H->>H: Add tool result to this request's conversation
+        end
+    end
+    H->>H: Validate diagnosis and cited evidence
+    H-->>E: Diagnosis, tool/model counts, evidence source, trace and deployed version
+```
 
-This workflow invokes deployment, not infrastructure provisioning. Native azd can
-configure agent identity/RBAC and applies endpoint settings from `azure.yaml`;
-its required permissions and image-pull access must be available. Pin the serving
-version before deploying a candidate and promote explicitly. Application smoke
-tests, evaluation, promotion, rollback and deletion are not automated here.
-Removing a directory does not delete its hosted agent. Coordinate external writers;
-GitHub concurrency is not a cloud-wide deployment lock.
+The original archive split this loop between a hosted handler and an AKS broker.
+Here it runs entirely in Foundry. The model can request only declared functions,
+with no arbitrary namespace, URL, shell command or tool arguments. Each tool can
+run once per investigation; request, time, output-token and evidence budgets bound
+work. Two investigations can run concurrently per container; additional requests
+wait. This is a small concurrency bound, not a measured autoscaling configuration.
 
-With no agents, validation proves discovery, handoff checks and safe skipping.
-Actual builds/scans, identity mapping, image/model access and hosted execution
-remain first-agent acceptance gates. This PR does not deploy an agent, sign an
-image, assert application test coverage or restore the retired image-pull role.
+The SRE check requires workload and event evidence plus degraded readiness before
+accepting `actionable`. It does not establish that a proposed diagnosis is correct.
+The returned decision never triggers a deployment, patch or draft PR.
 
-References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
-[native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
-[Foundry lifecycle](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent).
+## Run and evaluate
+
+From `agents/sre`:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install --require-hashes -r requirements.lock
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+| Mode | What is real | What is recorded / simulated |
+| --- | --- | --- |
+| Unit/HTTP contract tests | Runtime, HTTP adapter, validation and collectors' request contracts | Model responses and external HTTP responses; no Azure or telemetry export |
+| `evaluate.py --mode model` | Authenticated model inference | Dataset evidence; no hosted container and no AKS reads |
+| `evaluate.py --mode hosted` | Foundry endpoint, hosted runtime, identity and model inference | Dataset evidence; no AKS reads |
+| `evaluate.py --mode hosted --live` | Hosted runtime plus configured external collectors | No fixture evidence is sent; case expectations still need human comparison to current conditions |
+
+The historical healthy and readiness-fault cases came from the archive. Grader
+reference, rubric and provenance remain in the evaluator; the model receives only
+incident text and evidence that it requests. Build tests never call a paid model.
+A dataset replay is an offline *evaluation dataset*, not an offline model: model
+and hosted modes perform real Azure calls and incur usage.
+
+For a model-only case replay, authenticate through a supported Azure Identity
+credential (local Azure CLI is one option) and supply the current project endpoint:
+
+```sh
+export FOUNDRY_PROJECT_ENDPOINT='https://<account>.services.ai.azure.com/api/projects/<project>'
+.venv/bin/python evaluate.py evals/readiness-fault.yaml --mode model
+```
+
+After deployment, inspect the agent with native `azd ai agent show`. Use its exact
+Invocations endpoint and record the returned deployed agent/version in the report:
+
+```sh
+.venv/bin/python evaluate.py evals/readiness-fault.yaml \
+  --mode hosted --endpoint "$INVOCATIONS_ENDPOINT"
+```
+
+Automatic checks cover contracts, budgets and selected forbidden claims. A result
+remains `human_review_required`, with the case rubric included for platform-engineer
+assessment. Passing unit tests or these checks does not demonstrate diagnosis
+quality, prompt-injection resistance or a verified recovery. For live evaluation,
+use an incident/case whose namespace and expectations match the actual target;
+the bundled snapshots do not assert the platform's current condition.
+
+## Connect AKS as an external subject
+
+The default `DIAGNOSTICS_BACKEND: provided` accepts explicitly labelled,
+caller-provided evidence. With no evidence, no tools are advertised and the agent
+must abstain. It does not silently fall back to live access.
+
+To use live collectors, set these agent environment values in `azure.yaml`:
+
+```yaml
+DIAGNOSTICS_BACKEND: kubernetes
+KUBE_API_URL: https://<approved-api-host>
+KUBE_ALLOWED_NAMESPACE: <approved-namespace>
+# KUBE_CA_FILE: /app/<trusted-ca-file> # Only for a separately supplied private CA.
+```
+
+The hosted agent's identity needs explicit read-only authorization for Deployments,
+Rollouts, Pods, events and Pod logs in that namespace. It also needs network access
+to the API. The implementation uses Azure Identity tokens for the AKS server
+application, TLS verification and fixed GET requests; it does not load an
+in-cluster service-account token. An incident cannot choose another namespace.
+No such role, binding, network exception or CA delivery is created in this PR.
+
+Metrics are optional. `METRICS_URL` must identify an HTTPS Prometheus-compatible
+gateway that accepts Entra tokens for `METRICS_TOKEN_SCOPE`. If absent,
+`service_metrics` is not exposed. The archive's in-cluster Mimir address is not
+reused. Browser SSO alone does not prove machine-to-machine access to that gateway.
+These integrations need live authorization/connectivity verification before a
+live-tool evaluation can be claimed. A live backend rejects caller-provided evidence.
+
+## Build and delivery
+
+```sh
+docker build --platform linux/amd64 -t foundry-agent-review agents/sre
+```
+
+The Docker build runs the same offline tests before producing the non-root runtime.
+Its digest-pinned Python base and hashed dependencies are reproducible inputs;
+security updates require regenerating the lock/base pin and rebuilding. From the
+repository root, refresh dependencies with:
+
+```sh
+uv pip compile agents/sre/requirements.in --upgrade --generate-hashes \
+  -o agents/sre/requirements.lock
+```
+
+[deploy-agents.yml](.github/workflows/deploy-agents.yml) discovers `agents/*/`
+and calls the existing scalar shared Docker workflow for each agent. PR builds
+run without publishing or Azure login. Main publication pushes to ACR, scans by
+digest, then releases a per-agent image record. HIGH/CRITICAL findings block
+Foundry deployment; a rejected image can remain in ACR because push precedes scan.
+
+The deploy matrix verifies the record's repository, source revision, image path
+and digest, checks current main freshness, then calls the shared native Foundry
+action with that digest. It never uses a last-writer matrix output as a digest
+map. Per-agent concurrency serializes this workflow's deployments; it is not a
+cloud-wide deployment lock. Source and dependency tests stay in the agent build.
+
+Bootstrap now refreshes organization variables `FOUNDRY_PROJECT_ENDPOINT` and
+`AZURE_LOCATION`; no per-repository copy is needed. Repository/environment values
+can shadow them. GitHub Free exposes organization variables to public consumers.
+The existing organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+`AZURE_SUBSCRIPTION_ID` authenticate CI through OIDC. Foundry creates a separate
+runtime agent identity. Effective CI authentication, ACR pull and model access
+remain real deployment acceptance checks, not consequences of secret presence.
+
+The shared action reuses installed compatible `azd`, installs it only if missing,
+then deploys through the native extension. `HOSTED_AGENT_IMAGE` is the verified
+prebuilt digest; `AZD_AGENT_SKIP_ACR=true` and `docker.remoteBuild: true` select
+that image without a second build. `FOUNDRY_PROJECT_ENDPOINT` is referenced by the
+existing project service; it is not redefined in the container environment because
+Foundry injects that reserved value. The endpoint requires Entra authorization.
+
+Foundry versions a container definition, not each Python function separately.
+There are no managed connections, routines, skills, memory stores or toolboxes in
+this template. SDK operational spans cover investigations/model/tool calls;
+message-content capture is explicitly disabled. Trace export still depends on
+the hosting environment's telemetry configuration and has not been live-verified.
+Logs and redaction remain sensitive; common credential masking is not a DLP guarantee.
+
+**Follow-up:** review the efficiency of `.github/workflows/deploy-agents.yml`,
+including matrix/job overhead and per-agent artifact handoff. Do not change that
+composition during this component review. Signing, automated smoke gating,
+promotion/rollback, route pinning and deletion remain separate delivery work.
+Native deployment can move an unpinned endpoint to the latest version; pin a
+serving route before deploying a candidate. Removing a directory does not delete
+its hosted agent.
+
+## What changes for another agent
+
+Keep the hosting/runtime boundaries; replace the example instructions, tool
+functions and case-specific result validation, then supply independent evaluation
+cases. A new agent directory must use its directory name as the `azure.yaml`
+service key, preserve `${AZURE_ENV_NAME}` for repository/agent identity, and provide
+its own Dockerfile and locked dependencies. The existing workflow discovers it.
+This PR deliberately keeps the pieces visible together; it does not claim the
+runtime has already been extracted into a centrally consumed library.
+
+The archive is a source reference, not a runtime dependency. `runtime.py` adapts
+its `model.py` and bounded replay loop; `tools.py` adapts `diagnostics.py` and the
+triage guard; `server.py` retains the official adapter approach. Cases retain
+source provenance. The custom manifest loader/publisher, Helm charts, AKS broker,
+event sensors and coding workers are not restored.
+
+Sources: [archived source map](https://github.com/sre-agent-foundry),
+[Microsoft runtime contract](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agent-contract),
+[native azure.yaml](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
+[deployment and identity](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
+[protocol adapter](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-protocol-adapter).

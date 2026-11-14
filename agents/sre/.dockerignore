@@ -1,0 +1,6 @@
+.azure
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+evals/results
