@@ -170,8 +170,8 @@ KUBE_ALLOWED_NAMESPACE: <approved-namespace>
 The hosted agent's identity needs explicit read-only authorization for Deployments,
 Rollouts, Pods, events and Pod logs in that namespace. It also needs network access
 to the API. The implementation uses Azure Identity tokens for the AKS server
-application, TLS verification and fixed GET requests; it does not load an
-in-cluster service-account token. An incident cannot choose another namespace.
+application, TLS verification and fixed GET requests. The configured namespace
+bounds which incidents the live collectors accept.
 No such role, binding, network exception or CA delivery is created in this PR.
 
 Metrics are optional. `METRICS_URL` must identify an HTTPS Prometheus-compatible
