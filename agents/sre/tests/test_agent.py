@@ -245,16 +245,26 @@ class AgentTests(unittest.TestCase):
             self.assertTrue(all(request.method == 'GET' for request in requests))
 
     def test_dependency_errors_are_502_and_logs_exclude_private_messages(self):
-        for error in (RuntimeError, ValueError, KeyError):
+        from azure.core.exceptions import HttpResponseError
+        errors = [RuntimeError('private credential detail'), ValueError('private credential detail'),
+                  KeyError('private credential detail')]
+        for status in (400, 401, 403, 429, 'private credential detail'):
+            error = HttpResponseError('private credential detail')
+            error.status_code = status
+            errors.append(error)
+        for error in errors:
             model = Model()
-            with patch.object(model, 'create', side_effect=error('private credential detail')):
+            with patch.object(model, 'create', side_effect=error):
                 with self.assertLogs('hosting.server', level='ERROR') as logs:
                     with TestClient(build_app(client=model, config=local_config(), configure_observability=None)) as client:
                         response = client.post('/invocations', json={'incident': {'summary': 'fault'}})
                 self.assertEqual(response.status_code, 502)
                 self.assertNotIn('private credential detail', response.text + str(logs.output))
-                self.assertIn('error_type=' + error.__name__, str(logs.output))
+                self.assertIn('error_type=' + type(error).__name__, str(logs.output))
                 self.assertIn('trace_id=', str(logs.output))
+                status = getattr(error, 'status_code', None)
+                expected = status if type(status) is int else None
+                self.assertIn('upstream_status=' + str(expected), str(logs.output))
 
     def test_http_live_target_rejection_happens_before_any_collector_or_model_call(self):
         api, model = Mock(), Model()
