@@ -89,7 +89,7 @@ def validate_request(payload, live, persistent, policy):
                     continue
                 if not persistent:
                     raise ValueError('Persistent operations are disabled')
-                identifier(payload[field])
+                identifier(payload[field], maximum=512 if field == 'memory_id' else 128)
         return operation
     except (AttributeError, KeyError, TypeError, ValueError):
         raise InvalidRequest('Invalid request fields') from None

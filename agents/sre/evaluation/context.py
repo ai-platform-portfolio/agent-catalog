@@ -38,6 +38,20 @@ def check(service, environment, version, review, knowledge):
         memory_id = remembered['id']
         recalled = invoke({'operation': 'recall', 'query': marker})
         checks['recall_in_new_session'] = any(m['id'] == memory_id and marker in m['content'] for m in recalled['memories'])
+        # Remove only recognizable acceptance leftovers from this caller/repository.
+        cleaned = 0
+        for memory in recalled['memories']:
+            if memory['id'] == memory_id:
+                continue
+            try:
+                note = json.loads(memory['content'])
+            except (TypeError, ValueError):
+                continue
+            if (isinstance(note, dict) and isinstance(note.get('content'), str) and isinstance(note.get('review'), str)
+                    and re.fullmatch(r'Acceptance marker [0-9a-f]{32}: remember only explicitly reviewed operational context\.', note['content'])
+                    and re.fullmatch(re.escape(review.rsplit('/', 1)[0]) + r'/[0-9a-f]{40}', note['review'])):
+                invoke({'operation': 'forget', 'memory_id': memory['id']})
+                cleaned += 1
         # The question carries no expected answer or fixture evidence. This same
         # invocation exercises retrieval, model citation and a resumable checkpoint.
         incident = {'summary': 'According to the reviewed readiness runbook, what must pass before creating a draft PR? '
@@ -62,7 +76,7 @@ def check(service, environment, version, review, knowledge):
         investigation_id = None
         if not all(checks.values()):
             raise ValueError('Native durable context acceptance failed')
-        return {'version': version, 'checks': checks, 'retrieval': retrieval,
+        return {'version': version, 'checks': checks, 'retrieval': retrieval, 'cleaned_stale_test_memories': cleaned,
                 'limits': 'New sessions only; container restart, server TTL and a second authenticated caller remain live gates.'}
     finally:
         # Delete only this test's records, never the integration caller's other memory.

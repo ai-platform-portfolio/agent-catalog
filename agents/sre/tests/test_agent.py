@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 from evaluation.run import load_case, score
 from portfolio_agent_runtime.handoff import prepare
 from runtime.agent import load_config, model_client, run
-from hosting.server import build_app, investigate
+from hosting.server import build_app, investigate, validate_request
 from tools.diagnostics import EntraAuth, KubernetesTools, ProvidedTools, bounded_get, validate_diagnosis
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -243,6 +243,18 @@ class AgentTests(unittest.TestCase):
             logs = tools.execute('bounded_logs', incident)
             self.assertNotIn('sensitive-value', logs['logs'])
             self.assertTrue(all(request.method == 'GET' for request in requests))
+
+    def test_native_memory_ids_have_a_separate_bounded_request_limit(self):
+        memory_id = 'a' * 110 + '_' + 'b' * 32
+        self.assertEqual(validate_request({'operation': 'forget', 'memory_id': memory_id},
+                                         None, True, {}), 'forget')
+        for request in ({'operation': 'forget', 'memory_id': 'a' * 513},
+                        {'operation': 'forget', 'memory_id': '../another-record'},
+                        {'operation': 'resume', 'investigation_id': memory_id}):
+            with self.assertRaises(ValueError):
+                validate_request(request, None, True, {})
+        with self.assertRaises(ValueError):
+            validate_request({'operation': 'forget', 'memory_id': memory_id}, None, False, {})
 
     def test_dependency_errors_are_502_and_logs_exclude_private_messages(self):
         from azure.core.exceptions import HttpResponseError
