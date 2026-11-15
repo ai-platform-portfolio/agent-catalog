@@ -191,10 +191,11 @@ jobs:
 
       - name: Deploy prebuilt digest with native azd
         id: candidate
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@5d709a03b9797685831f5705dc9ba6807f059bbf
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@38a239a1068f766437a043c8a0d3fac337e71601
         with:
           service: ${{ matrix.agent }}
           project-id: ${{ vars.AZURE_AI_PROJECT_ID }}
+          runtime-project-role-id: 53ca6127-db72-4b80-b1b0-d745d6d5456d # Foundry User, project scope
           image: ${{ steps.image.outputs.image }}
           environment: ${{ github.event.repository.name }}-${{ matrix.agent }}
           working-directory: agents/${{ matrix.agent }}
