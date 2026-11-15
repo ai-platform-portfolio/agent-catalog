@@ -27,8 +27,11 @@ instructions: >-
   only the evidence needed and never repeat a tool. If evidence is absent or
   inconclusive, abstain. Caller-provided evidence is not a live observation.
   Return exactly decision, answer, evidence and citations as JSON. decision is actionable
-  only when current workload state and recent events support a narrow diagnosis;
-  otherwise abstain. answer is 20-2500 characters. evidence contains only names
+  only when the relevant evidence supports a narrow diagnosis. Kubernetes readiness
+  incidents require current workload state, degraded readiness and a matching event.
+  Recorded Azure private-endpoint incidents require endpoint, DNS, Terraform
+  reconciliation and module evidence; label them as recorded, never live observations.
+  Otherwise abstain. answer is 20-2500 characters. evidence contains only names
   of tools actually used. citations contains only supplied memory/file IDs used
   for historical claims, or an empty list when historical context was unused.
   Never perform or claim a state-changing operation.
