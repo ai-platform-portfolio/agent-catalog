@@ -159,7 +159,11 @@ class ReleaseTests(unittest.TestCase):
     def test_context_checks_citation_and_cleans_up_after_retrieval_failure(self):
         for fails in (False, True):
             with self.subTest(retrieval_fails=fails):
-                calls, memories, checkpoints = [], {}, {}
+                keep = json.dumps({'content': 'Actual reviewed operational note.', 'review': 'https://example.test/' + 'a' * 40})
+                stale = json.dumps({'content': 'Acceptance marker ' + 'a' * 32 + ': remember only explicitly reviewed operational context.',
+                                    'review': 'https://example.test/' + 'b' * 40})
+                foreign = json.dumps({'content': json.loads(stale)['content'], 'review': 'https://other.test/' + 'b' * 40})
+                calls, memories, checkpoints = [], {'keep': keep, 'foreign-test': foreign, 'old-test': stale}, {}
                 def invoke(service, environment, version, body):
                     self.assertEqual(version, '7')
                     self.assertNotIn('evidence', body)
@@ -190,7 +194,8 @@ class ReleaseTests(unittest.TestCase):
                     else:
                         report = check_context('sre', 'environment', '7', 'https://example.test/review', self.knowledge)
                         self.assertTrue(report['checks']['grounded_runbook_citation'])
-                self.assertEqual(memories, {})
+                        self.assertEqual(report['cleaned_stale_test_memories'], 1)
+                self.assertEqual(memories, {'keep': keep, 'foreign-test': foreign})
                 self.assertEqual(checkpoints, {})
                 question = next(body['incident']['summary'] for body in calls if 'incident' in body)
                 self.assertNotIn(self.retrieval['answer'], question)
