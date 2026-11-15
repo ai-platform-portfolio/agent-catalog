@@ -182,8 +182,11 @@ def build_app(client=None, config=None, **host_options):
                 span = trace.get_current_span().get_span_context()
                 trace_id = f'{span.trace_id:032x}' if span.is_valid else '-'
                 # Deliberately omit exception messages, traceback locals and payloads.
-                logging.getLogger(__name__).error('Agent failure operation=%s error_type=%s trace_id=%s',
-                                                  operation, type(error).__name__, trace_id)
+                status = getattr(error, 'status_code', None)
+                status = status if type(status) is int and 100 <= status <= 599 else None
+                logging.getLogger(__name__).error(
+                    'Agent failure operation=%s error_type=%s upstream_status=%s trace_id=%s',
+                    operation, type(error).__name__, status, trace_id)
                 return JSONResponse({'error': 'Investigation failed'}, status_code=502)
 
     @app.shutdown_handler
