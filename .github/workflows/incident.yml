@@ -70,7 +70,7 @@ jobs:
 
       - name: Investigate in Foundry
         id: investigation
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@52c206abbccce14939c12bb7b556cdecc284df15
         with:
           service: ${{ steps.request.outputs.agent }}
           environment: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
@@ -130,7 +130,7 @@ jobs:
       - name: Propose in Foundry without GitHub write credentials
         id: proposal
         if: steps.evidence.outputs.actionable == 'true'
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@52c206abbccce14939c12bb7b556cdecc284df15
         with:
           service: ${{ steps.request.outputs.agent }}
           environment: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
@@ -174,7 +174,7 @@ jobs:
       - name: Mint publication credentials only after validation passes
         id: token
         if: steps.evidence.outputs.actionable == 'true'
-        uses: ai-platform-portfolio/ops-shared/.github/actions/github-app-token@1a0f0a93650068afdf978a7f0e11f21aebd3ebbb
+        uses: ai-platform-portfolio/ops-shared/.github/actions/github-app-token@52c206abbccce14939c12bb7b556cdecc284df15
         with:
           vault-name: ${{ secrets.FUNCTION_VAULT }}
           key-name: ai-platform-clusters-pem-key
