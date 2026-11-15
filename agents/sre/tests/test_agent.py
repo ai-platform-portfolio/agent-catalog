@@ -149,26 +149,41 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(len(score(case, result, load_config())['checks']), 6)
         result['tool_calls'].append('workload_state')
         self.assertFalse(score(case, result, load_config())['checks']['forbidden_tools'])
-        live = KubernetesTools(Mock(), 'approved')
+        live = KubernetesTools(Mock(), 'approved', 'api')
         self.assertNotIn('get_private_endpoint', live.names)
 
-    def test_live_tools_reject_cross_namespace_and_only_issue_reads(self):
+    def test_live_tools_reject_cross_targets_and_correlate_event_uids(self):
         requests = []
 
         def respond(request):
             requests.append(request)
-            return httpx.Response(200, json={'items': [{'reason': 'Unhealthy',
-                'message': 'Readiness probe failed: token=private-value',
-                'involvedObject': {'name': 'api-pod', 'kind': 'Pod'}}]})
+            if '/deployments/' in request.url.path:
+                return httpx.Response(200, json={'metadata': {'uid': 'deployment-current'},
+                    'spec': {'replicas': 1, 'selector': {'matchLabels': {'app': 'api'}}}})
+            if request.url.path.endswith('/pods'):
+                return httpx.Response(200, json={'items': [{'metadata': {'name': 'api-pod', 'uid': 'pod-current'}}]})
+            def event(name, uid):
+                return {'reason': 'Unhealthy', 'message': 'Readiness probe failed: token=private-value',
+                        'involvedObject': {'name': name, 'uid': uid, 'kind': 'Pod'}}
+            return httpx.Response(200, json={'items': [event('api-worker-pod', 'neighbor'),
+                event('api-pod', 'pod-replaced'), event('api-pod', 'pod-current')]})
 
         with httpx.Client(base_url='https://kube.test', transport=httpx.MockTransport(respond)) as client:
-            tools = KubernetesTools(client, 'approved')
-            with self.assertRaises(ValueError):
-                tools.execute('recent_events', {'namespace': 'other', 'workload': 'api'})
+            tools = KubernetesTools(client, 'approved', 'api')
+            for incident in ({'namespace': 'other', 'workload': 'api'},
+                             {'namespace': 'approved', 'workload': 'other-service'}):
+                with self.assertRaises(ValueError):
+                    tools.execute('recent_events', incident)
             self.assertEqual(requests, [])
-            evidence = tools.execute('recent_events', {'namespace': 'approved', 'workload': 'api'})
+            incident = {'namespace': 'approved', 'workload': 'api'}
+            state = tools.execute('workload_state', incident)
+            evidence = tools.execute('recent_events', incident)
+            self.assertEqual(state['pods'][0]['uid'], 'pod-current')
+            self.assertEqual([event['object_uid'] for event in evidence['events']], ['pod-current'])
             self.assertNotIn('private-value', json.dumps(evidence))
-            self.assertEqual([request.method for request in requests], ['GET'])
+            self.assertEqual([request.method for request in requests], ['GET', 'GET', 'GET'])
+            tools.execute('workload_state', incident)
+            self.assertEqual(len(requests), 3, 'Workload snapshot should be reused inside one investigation')
             self.assertNotIn('service_metrics', tools.names)
 
     def test_live_rollout_fallback_selects_pods_and_bounds_log_reads(self):
@@ -180,30 +195,46 @@ class AgentTests(unittest.TestCase):
             if '/deployments/' in path:
                 return httpx.Response(404)
             if '/rollouts/' in path:
-                return httpx.Response(200, json={'spec': {'replicas': 1, 'selector': {'matchLabels': {'app': 'api'}}}})
+                return httpx.Response(200, json={'metadata': {'uid': 'rollout-current'}, 'spec': {'replicas': 1, 'selector': {'matchLabels': {'app': 'api'}}}})
             if path.endswith('/pods'):
                 self.assertEqual(request.url.params['labelSelector'], 'app=api')
-                return httpx.Response(200, json={'items': [{'metadata': {'name': 'api-selected'},
+                return httpx.Response(200, json={'items': [{'metadata': {'name': 'api-selected', 'uid': 'pod-selected'},
                                                            'status': {'phase': 'Running'}}]})
             self.assertTrue(path.endswith('/pods/api-selected/log'))
             self.assertEqual(request.url.params['limitBytes'], '8192')
             return httpx.Response(200, text='Authorization: Bearer sensitive-value')
 
         with httpx.Client(base_url='https://kube.test', transport=httpx.MockTransport(respond)) as client:
-            tools = KubernetesTools(client, 'approved')
+            tools = KubernetesTools(client, 'approved', 'api')
             incident = {'namespace': 'approved', 'workload': 'api'}
             self.assertEqual(tools.execute('workload_state', incident)['deployment']['kind'], 'Rollout')
             logs = tools.execute('bounded_logs', incident)
             self.assertNotIn('sensitive-value', logs['logs'])
             self.assertTrue(all(request.method == 'GET' for request in requests))
 
-    def test_transport_failures_are_sanitized_at_the_protocol_boundary(self):
-        model = Model()
-        with patch.object(model, 'create', side_effect=RuntimeError('private credential detail')):
-            with TestClient(build_app(client=model, config=local_config(), configure_observability=None)) as client:
-                response = client.post('/invocations', json={'incident': {'summary': 'fault'}})
+    def test_dependency_errors_are_502_and_logs_exclude_private_messages(self):
+        for error in (RuntimeError, ValueError, KeyError):
+            model = Model()
+            with patch.object(model, 'create', side_effect=error('private credential detail')):
+                with self.assertLogs('hosting.server', level='ERROR') as logs:
+                    with TestClient(build_app(client=model, config=local_config(), configure_observability=None)) as client:
+                        response = client.post('/invocations', json={'incident': {'summary': 'fault'}})
                 self.assertEqual(response.status_code, 502)
-                self.assertNotIn('private credential detail', response.text)
+                self.assertNotIn('private credential detail', response.text + str(logs.output))
+                self.assertIn('error_type=' + error.__name__, str(logs.output))
+                self.assertIn('trace_id=', str(logs.output))
+
+    def test_http_live_target_rejection_happens_before_any_collector_or_model_call(self):
+        api, model = Mock(), Model()
+        with patch.dict('os.environ', {'DIAGNOSTICS_BACKEND': 'kubernetes',
+                'KUBE_ALLOWED_NAMESPACE': 'approved', 'KUBE_ALLOWED_WORKLOAD': 'api'}), patch(
+                'hosting.server.live_clients', return_value=(api, None)):
+            with TestClient(build_app(client=model, config=local_config(), configure_observability=None)) as client:
+                response = client.post('/invocations', json={'incident': {
+                    'summary': 'fault', 'namespace': 'approved', 'workload': 'other-service'}})
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(model.requests, [])
+                api.stream.assert_not_called()
 
     def test_http_evidence_budget_and_short_lived_tool_auth(self):
         with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b'x' * 20))) as client:
@@ -219,7 +250,7 @@ class AgentTests(unittest.TestCase):
     def test_live_configuration_replays_without_live_provenance_or_collector_calls(self):
         api = Mock()
         _, payload = load_case(ROOT / 'evaluation/cases/healthy.yaml')
-        result = investigate(payload, load_config(), Model(['workload_state']), live=(api, None, 'approved'))
+        result = investigate(payload, load_config(), Model(['workload_state']), live=(api, None, 'approved', 'api'))
         self.assertEqual(result['evidence_source'], 'caller_provided')
         self.assertEqual(api.mock_calls, [])
 
@@ -227,9 +258,11 @@ class AgentTests(unittest.TestCase):
         from unittest.mock import AsyncMock
         _, payload = load_case(ROOT / 'evaluation/cases/healthy.yaml')
         with patch.dict('os.environ', {'DIAGNOSTICS_BACKEND': 'provided',
-                                       'FOUNDRY_PROJECT_ENDPOINT': 'https://example.test/api/projects/test'}):
+                                       'FOUNDRY_PROJECT_ENDPOINT': 'https://example.test/api/projects/test',
+                                       'FOUNDRY_AGENT_NAME': 'test-agent', 'MEMORY_STORE_NAME': 'test-memory',
+                                       'KNOWLEDGE_MANIFEST_JSON': '{"toolbox":"test","sources":[]}'}):
             with patch('azure.ai.projects.AIProjectClient'), patch(
-                    'portfolio_agent_runtime.hosting.invoke', new_callable=AsyncMock) as persistent:
+                    'hosting.server.persistent_invoke', new_callable=AsyncMock) as persistent:
                 with TestClient(build_app(client=Model(['workload_state']), configure_observability=None)) as client:
                     response = client.post('/invocations', json=payload)
                     self.assertEqual(response.status_code, 200, response.text)
@@ -244,6 +277,8 @@ class AgentTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()['diagnosis']['decision'], 'abstain')
                 self.assertEqual(client.post('/invocations', json={'rubric': {}}).status_code, 400)
+                self.assertEqual(client.post('/invocations', content=b'not-json').status_code, 400)
+                self.assertEqual(client.post('/invocations', json={'incident': {'summary': 'x' * 8192}}).status_code, 400)
                 self.assertEqual(client.post('/invocations', content=b'x' * 131073).status_code, 413)
 
 

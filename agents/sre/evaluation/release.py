@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from evaluation.run import load_case
+from evaluation.context import validate_retrieval
 
 
 def azd(*arguments):
@@ -42,13 +43,16 @@ def validate_evidence(directory, agent, version):
             raise ValueError('Evaluation did not exercise this immutable release')
     if yaml.safe_load(Path('config/agent.yaml').read_text()).get('memory', {}).get('enabled'):
         context = json.loads((directory / 'context.json').read_text())
-        required = {'recall_in_new_session', 'checkpoint_in_new_session', 'forget_memory', 'forget_checkpoint'}
+        required = {'recall_in_new_session', 'checkpoint_in_new_session', 'forget_memory', 'forget_checkpoint', 'grounded_runbook_citation'}
         if (context.get('version') != version or set(context.get('checks', {})) != required
                 or not all(value is True for value in context['checks'].values())):
             raise ValueError('Missing or failed native context acceptance')
         knowledge = json.loads((directory / 'knowledge.json').read_text())
         if knowledge.get('revision') != release['source_revision'] or not knowledge.get('sources'):
             raise ValueError('Knowledge publication does not match the immutable release')
+        validate_retrieval(context.get('retrieval', {}), knowledge, version)
+        if context['retrieval']['deployment'] != {key: release[key] for key in ('agent', 'version', 'image', 'source_revision')}:
+            raise ValueError('Retrieval did not exercise this immutable release')
     return release
 
 

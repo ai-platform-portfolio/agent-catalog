@@ -34,10 +34,10 @@ def redact(value: str) -> str:
     return _FIELD.sub(r"\1[REDACTED]", _BEARER.sub(r"\1[REDACTED]", value))
 
 
-def target(incident: dict, allowed_namespace: str) -> tuple[str, str]:
+def target(incident: dict, allowed_namespace: str, allowed_workload: str) -> tuple[str, str]:
     namespace, workload = incident.get("namespace"), incident.get("workload")
-    if namespace != allowed_namespace or not isinstance(workload, str):
-        raise ValueError("Incident target must match the approved namespace")
+    if namespace != allowed_namespace or workload != allowed_workload or not isinstance(workload, str):
+        raise ValueError("Incident target must match the approved namespace and workload")
     if len(namespace) > 63 or len(workload) > 63 or not _DNS_LABEL.fullmatch(namespace) or not _DNS_LABEL.fullmatch(workload):
         raise ValueError("Incident target must use Kubernetes DNS labels")
     return namespace, workload
@@ -91,9 +91,10 @@ class KubernetesTools:
     source = 'live_kubernetes'
     descriptions = TOOL_DESCRIPTIONS
 
-    def __init__(self, api_client, allowed_namespace, metrics_client=None):
+    def __init__(self, api_client, allowed_namespace, allowed_workload, metrics_client=None):
         self.api, self.metrics = api_client, metrics_client
-        self.allowed_namespace = allowed_namespace
+        self.allowed_namespace, self.allowed_workload = allowed_namespace, allowed_workload
+        self.state = None
         self.names = ['workload_state', 'recent_events', 'bounded_logs']
         if metrics_client is not None:
             self.names.append('service_metrics')
@@ -108,10 +109,12 @@ class KubernetesTools:
     def _collect(self, name: str, incident: dict) -> dict:
         if name not in self.names:
             raise ValueError("Tool is not in the read-only registry")
-        namespace, workload = target(incident, self.allowed_namespace)
+        namespace, workload = target(incident, self.allowed_namespace, self.allowed_workload)
         prefix = f"/api/v1/namespaces/{quote(namespace)}"
 
         if name == "workload_state":
+            if self.state is not None:
+                return self.state
             kind = "Deployment"
             try:
                 deployment = self._get(f"/apis/apps/v1/namespaces/{quote(namespace)}/deployments/{quote(workload)}")
@@ -126,8 +129,9 @@ class KubernetesTools:
             label_selector = ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
             pods = self._get(f"{prefix}/pods", {"labelSelector": label_selector, "limit": 20})
             containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
-            return {
+            self.state = {
                 "deployment": {
+                    "uid": deployment["metadata"]["uid"],
                     "kind": kind,
                     "name": workload,
                     "generation": deployment.get("metadata", {}).get("generation"),
@@ -152,6 +156,7 @@ class KubernetesTools:
                 "pods": [
                     {
                         "name": pod["metadata"]["name"],
+                        "uid": pod["metadata"]["uid"],
                         "phase": pod.get("status", {}).get("phase"),
                         "restarts": sum(c.get("restartCount", 0) for c in pod.get("status", {}).get("containerStatuses", [])),
                         "waiting": [c.get("state", {}).get("waiting") for c in pod.get("status", {}).get("containerStatuses", []) if c.get("state", {}).get("waiting")],
@@ -168,11 +173,17 @@ class KubernetesTools:
                 "truncated": len(pods.get("items", [])) > 20 or bool(pods.get("metadata", {}).get("continue")),
             }
 
+            return self.state
+
         if name == "recent_events":
+            state = self._collect("workload_state", incident)
+            owners = {(state["deployment"]["kind"], state["deployment"]["uid"])}
+            owners.update(("Pod", pod["uid"]) for pod in state["pods"])
             events = self._get(f"{prefix}/events", {"limit": 100})
             items = sorted(
                 (event for event in events.get("items", [])
-                 if str(event.get("involvedObject", {}).get("name", "")).startswith(workload)),
+                 if (event.get("involvedObject", {}).get("kind"),
+                     event.get("involvedObject", {}).get("uid")) in owners),
                 key=lambda e: e.get("lastTimestamp") or e.get("eventTime") or "", reverse=True,
             )
             return {"events": [
@@ -181,6 +192,7 @@ class KubernetesTools:
                     "message": redact(str(event.get("message", "")))[:500],
                     "kind": event.get("involvedObject", {}).get("kind"),
                     "object": event.get("involvedObject", {}).get("name"),
+                    "object_uid": event["involvedObject"]["uid"],
                     "time": event.get("lastTimestamp") or event.get("eventTime"),
                 }
                 for event in items[:20]

@@ -236,7 +236,8 @@ jobs:
           done
           if "$RUNNER_TEMP/evaluation-venv/bin/python" -c 'from runtime.agent import load_config; raise SystemExit(not load_config().get("memory", {}).get("enabled", False))'; then
             "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.context "$SERVICE" "$AZURE_ENV_NAME" "$CANDIDATE_VERSION" \
-              --review "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" --output "$RUNNER_TEMP/acceptance/context.json"
+              --review "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
+              --knowledge-manifest "$RUNNER_TEMP/acceptance/knowledge.json" --output "$RUNNER_TEMP/acceptance/context.json"
           fi
 
       - name: Retain candidate and evaluation evidence

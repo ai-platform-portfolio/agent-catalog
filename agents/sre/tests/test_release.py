@@ -15,6 +15,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTrace
 import yaml
 
 from evaluation.release import route, validate_evidence
+from evaluation.context import check as check_context
 from evaluation.run import candidate_request, load_case, score
 from hosting.server import investigate
 from runtime.agent import load_config
@@ -108,11 +109,18 @@ class ReleaseTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         (self.root / 'release.json').write_text(json.dumps(self.release))
-        (self.root / 'context.json').write_text(json.dumps({'version': '7', 'checks': {
+        self.source = {'file_id': 'file-reviewed', 'path': 'readiness.md', 'sha256': 'e' * 64,
+                       'url': 'https://github.com/example/catalog/blob/' + self.release['source_revision'] + '/knowledge/readiness.md'}
+        self.knowledge = {'revision': self.release['source_revision'], 'sources': [self.source]}
+        self.retrieval = {'deployment': self.release, 'trace_id': 'c' * 32,
+                          'answer': 'The exact proposal must pass validation before creating a draft PR.',
+                          'cited_file_ids': ['file-reviewed'], 'sources': [self.source]}
+        self.context = {'version': '7', 'checks': {
             'recall_in_new_session': True, 'checkpoint_in_new_session': True,
-            'forget_memory': True, 'forget_checkpoint': True}}))
-        (self.root / 'knowledge.json').write_text(json.dumps({
-            'revision': self.release['source_revision'], 'sources': [{'file_id': 'file-reviewed'}]}))
+            'forget_memory': True, 'forget_checkpoint': True, 'grounded_runbook_citation': True},
+            'retrieval': self.retrieval}
+        (self.root / 'context.json').write_text(json.dumps(self.context))
+        (self.root / 'knowledge.json').write_text(json.dumps(self.knowledge))
         for path in Path('evaluation/cases').glob('*.yaml'):
             case, payload = load_case(path)
             calls = case['rubric'].get('automated', {}).get('required_tools', [])
@@ -135,6 +143,57 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'healthy.json').write_text(json.dumps(report))
         with self.assertRaises(ValueError):
             validate_evidence(self.root, self.release['agent'], '7')
+
+    def test_release_requires_retrieved_citations_not_just_publication(self):
+        changes = ({'cited_file_ids': []}, {'sources': []},
+                   {'sources': [{**self.source, 'sha256': 'f' * 64}]},
+                   {'deployment': {**self.release, 'image': 'different-image'}},
+                   {'answer': 'This answer does not establish the runbook requirement.'})
+        for change in changes:
+            with self.subTest(change=change):
+                context = {**self.context, 'retrieval': {**self.retrieval, **change}}
+                (self.root / 'context.json').write_text(json.dumps(context))
+                with self.assertRaises(ValueError):
+                    validate_evidence(self.root, self.release['agent'], '7')
+
+    def test_context_checks_citation_and_cleans_up_after_retrieval_failure(self):
+        for fails in (False, True):
+            with self.subTest(retrieval_fails=fails):
+                calls, memories, checkpoints = [], {}, {}
+                def invoke(service, environment, version, body):
+                    self.assertEqual(version, '7')
+                    self.assertNotIn('evidence', body)
+                    calls.append(body)
+                    operation = body.get('operation')
+                    if operation == 'remember':
+                        memories['memory'] = body['content']
+                        return {'id': 'memory'}
+                    if operation == 'recall':
+                        return {'memories': [{'id': key, 'content': value} for key, value in memories.items()]}
+                    if operation is None:
+                        checkpoints['investigation'] = {'trace_id': self.retrieval['trace_id']}
+                        return {'investigation_id': 'investigation', 'deployment': self.release,
+                                'trace_id': self.retrieval['trace_id'], 'diagnosis': {
+                                    'answer': self.retrieval['answer'], 'citations': [] if fails else ['file-reviewed']},
+                                'context': {'knowledge': {'citations': [self.source]}}}
+                    if operation == 'resume':
+                        return {'checkpoint': checkpoints.get(body['investigation_id'])}
+                    if operation == 'forget':
+                        memories.pop(body['memory_id'])
+                    if operation == 'forget_investigation':
+                        checkpoints.pop(body['investigation_id'])
+                    return {'forgotten': True}
+                with patch('evaluation.context.candidate_request', side_effect=invoke):
+                    if fails:
+                        with self.assertRaises(ValueError):
+                            check_context('sre', 'environment', '7', 'https://example.test/review', self.knowledge)
+                    else:
+                        report = check_context('sre', 'environment', '7', 'https://example.test/review', self.knowledge)
+                        self.assertTrue(report['checks']['grounded_runbook_citation'])
+                self.assertEqual(memories, {})
+                self.assertEqual(checkpoints, {})
+                question = next(body['incident']['summary'] for body in calls if 'incident' in body)
+                self.assertNotIn(self.retrieval['answer'], question)
 
     def test_promotion_and_rollback_preserve_auth_and_verify_route_readback(self):
         (self.root / 'azure.yaml').write_text((ROOT / 'azure.yaml').read_text())

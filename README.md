@@ -106,9 +106,14 @@ The investigation loop runs in the Foundry-hosted container. The model can reque
 with no arbitrary namespace, URL, shell command or tool arguments. Each tool can
 run once per investigation; request, time, output-token and evidence budgets bound
 work. Two investigations can run concurrently per container; additional requests
-wait. This is a small concurrency bound, not a measured autoscaling configuration.
+wait. Malformed caller inputs return HTTP 400; model, collector and storage
+failures return HTTP 502. Failure logs contain only operation, exception type and
+trace ID, omitting raw exception messages and request payloads. This is a small concurrency bound, not a measured autoscaling configuration.
 
-The SRE check requires workload and event evidence plus degraded readiness before
+Live collectors enforce both the configured namespace and workload. Events are
+matched to the current workload/selected Pod UIDs, not name prefixes; one
+request-local workload snapshot is reused for event and log collection. The SRE
+check requires workload and event evidence plus degraded readiness before
 accepting `actionable`. It does not establish that a proposed diagnosis is correct.
 An ordinary investigation response publishes no changes. The separate event
 workflow can pass an actionable live diagnosis into proposal, isolated validation
@@ -418,10 +423,15 @@ read-only RoleBinding is reconciled. Provided-evidence cases remain independent
 of an available AKS cluster.
 
 `evaluation/context.py` checks new-session recall, checkpoint resume and deletion
-using synthetic records, and cleans up only its own records. Container restart,
-a second genuinely authenticated caller, server TTL enforcement, actual retrieval
-citations, live diagnostics/traces and the controlled event-to-draft chain remain
-live acceptance gates. Merging source does not prove any of them.
+using synthetic records, and cleans up only its own records. Its checkpoint
+investigation asks a runbook question without supplying the expected answer. The
+answer must cite the retrieved `readiness.md` file with matching source metadata
+and revision; the record retains the answer, source citations, trace and deployment.
+Promotion/rollback revalidate that evidence against the published manifest and
+immutable release, rather than accepting a publication manifest alone. These
+checks are implemented but have not run against the hosted candidate. Container
+restart, a second genuinely authenticated caller, server TTL enforcement, live
+diagnostics/traces and the controlled event-to-draft chain remain live acceptance gates. Merging source does not prove any of them.
 
 Stop/delete the event subscription before retiring the hosted agent; drain or
 cancel active incident runs. Retain earlier versions and their knowledge manifests
