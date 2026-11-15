@@ -361,7 +361,7 @@ flowchart LR
 | Thin runtime binding, instructions and case-study tools | `agents/sre/runtime`, `config`, `tools` |
 | Foundry protocol adapter and composition | `agents/sre/hosting` |
 | Model/tool loop, grading, native memory/state, knowledge, intake and bounded coding capabilities | Released `application-library/agent-runtime` package |
-| Event/credential/RBAC templates | `application-helm-chart/templates/agents` and `templates/credentials` |
+| Event/credential/RBAC templates | `application-helm-chart/templates/events` and `templates/credentials` |
 | Publication and incident orchestration | `deploy-agents.yml` and `incident.yml`; separate lifecycle purposes |
 | Scalar native invocation and scoped App token actions | `ops-shared` |
 | Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
@@ -389,11 +389,24 @@ Publication credentials are minted only after validation succeeds. Trusted host
 steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
 overwrite another proposal or reopen a closed incident PR.
 
-The optional subscription values are in `deploy/events.yaml`. The platform
-operator supplies the target namespace, existing GitHub App metadata and actual
-Foundry **instance identity** principal to the shared chart at bootstrap. Render
-only its Argo registration template initially; child reconciliation registers
-nothing. No per-application delivery resource is added to GitOps.
+The optional subscription is configured in `deploy/events.yaml` using the
+application chart's generic native `events.sources` / `events.sensors` interface.
+Readiness filters, the GitHub destination and incident payload live here, not in
+shared templates. The chart uses one shared ServiceAccount for this subscription,
+wires its namespace-scoped watch permissions and delivers the selected expiring
+GitHub token. No catalog-specific change in GitOps is required.
+
+At bootstrap the operator selects
+`events.sources.readiness.resource.readiness.namespace` and supplies existing App
+metadata through `platform.events.github`. The emitted event supplies its namespace
+to the payload. The Pod filter and workload payload select `api`; change both when
+selecting another workload. Configure the actual Foundry **instance identity**'s
+read-only target Role/RoleBinding through the chart's existing
+`platform.credentials.roles` / `roleBindings` values, separately from event watch
+permissions. No Foundry reader identity or policy is hardcoded into the generic
+event templates. Render only `templates/argocd/application.yaml` initially; child
+reconciliation registers nothing. Event and operator credential inputs are passed
+through by that registration. No subscription was applied by this source change.
 
 AKS test inputs are optional **repository-level** configuration:
 `AGENT_DIAGNOSTICS_BACKEND=kubernetes`, `KUBE_API_URL`, public `KUBE_CA_PEM`,
