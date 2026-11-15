@@ -15,10 +15,11 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTrace
 import yaml
 
 from evaluation.release import route, validate_evidence
+from evaluation.context import check as check_context
 from evaluation.run import candidate_request, load_case, score
 from hosting.server import investigate
 from runtime.agent import load_config
-from test_agent import Model
+from test_agent import Model, local_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,7 +46,7 @@ from types import SimpleNamespace
 from telemetry.tracing import shutdown
 from hosting.server import build_app, investigate
 from runtime.agent import load_config
-from test_agent import Model
+from test_agent import Model, local_config
 model = Model()
 original = model.create
 def create(**request):
@@ -55,7 +56,7 @@ def create(**request):
     return response
 model.create = create
 started = time.monotonic()
-app = build_app(client=model)
+app = build_app(client=model, config=local_config())
 assert time.monotonic() - started < 1, 'export blocked startup'
 started = time.monotonic()
 result = investigate({'incident': {'summary': 'private-prompt-never-export'}}, load_config(), model)
@@ -108,9 +109,23 @@ class ReleaseTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         (self.root / 'release.json').write_text(json.dumps(self.release))
+        self.source = {'file_id': 'file-reviewed', 'path': 'readiness.md', 'sha256': 'e' * 64,
+                       'url': 'https://github.com/example/catalog/blob/' + self.release['source_revision'] + '/knowledge/readiness.md'}
+        self.knowledge = {'revision': self.release['source_revision'], 'sources': [self.source]}
+        self.retrieval = {'deployment': self.release, 'trace_id': 'c' * 32,
+                          'answer': 'The exact proposal must pass validation before creating a draft PR.',
+                          'cited_file_ids': ['file-reviewed'], 'sources': [self.source]}
+        self.context = {'version': '7', 'checks': {
+            'recall_in_new_session': True, 'checkpoint_in_new_session': True,
+            'forget_memory': True, 'forget_checkpoint': True, 'grounded_runbook_citation': True},
+            'retrieval': self.retrieval}
+        (self.root / 'context.json').write_text(json.dumps(self.context))
+        (self.root / 'knowledge.json').write_text(json.dumps(self.knowledge))
         for path in Path('evaluation/cases').glob('*.yaml'):
             case, payload = load_case(path)
-            calls = ['workload_state', 'recent_events', 'bounded_logs'] if path.stem == 'readiness-fault' else ['workload_state']
+            calls = case['rubric'].get('automated', {}).get('required_tools', [])
+            if path.stem == 'readiness-fault':
+                calls = ['workload_state', 'recent_events', 'bounded_logs']
             result = investigate(payload, load_config(), Model(calls, 'actionable' if path.stem == 'readiness-fault' else 'abstain'))
             result.update(trace_id='c' * 32, deployment=self.release)
             report = score(case, result, load_config())
@@ -129,10 +144,63 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_evidence(self.root, self.release['agent'], '7')
 
+    def test_release_requires_retrieved_citations_not_just_publication(self):
+        changes = ({'cited_file_ids': []}, {'sources': []},
+                   {'sources': [{**self.source, 'sha256': 'f' * 64}]},
+                   {'deployment': {**self.release, 'image': 'different-image'}},
+                   {'answer': 'This answer does not establish the runbook requirement.'})
+        for change in changes:
+            with self.subTest(change=change):
+                context = {**self.context, 'retrieval': {**self.retrieval, **change}}
+                (self.root / 'context.json').write_text(json.dumps(context))
+                with self.assertRaises(ValueError):
+                    validate_evidence(self.root, self.release['agent'], '7')
+
+    def test_context_checks_citation_and_cleans_up_after_retrieval_failure(self):
+        for fails in (False, True):
+            with self.subTest(retrieval_fails=fails):
+                calls, memories, checkpoints = [], {}, {}
+                def invoke(service, environment, version, body):
+                    self.assertEqual(version, '7')
+                    self.assertNotIn('evidence', body)
+                    calls.append(body)
+                    operation = body.get('operation')
+                    if operation == 'remember':
+                        memories['memory'] = body['content']
+                        return {'id': 'memory'}
+                    if operation == 'recall':
+                        return {'memories': [{'id': key, 'content': value} for key, value in memories.items()]}
+                    if operation is None:
+                        checkpoints['investigation'] = {'trace_id': self.retrieval['trace_id']}
+                        return {'investigation_id': 'investigation', 'deployment': self.release,
+                                'trace_id': self.retrieval['trace_id'], 'diagnosis': {
+                                    'answer': self.retrieval['answer'], 'citations': [] if fails else ['file-reviewed']},
+                                'context': {'knowledge': {'citations': [self.source]}}}
+                    if operation == 'resume':
+                        return {'checkpoint': checkpoints.get(body['investigation_id'])}
+                    if operation == 'forget':
+                        memories.pop(body['memory_id'])
+                    if operation == 'forget_investigation':
+                        checkpoints.pop(body['investigation_id'])
+                    return {'forgotten': True}
+                with patch('evaluation.context.candidate_request', side_effect=invoke):
+                    if fails:
+                        with self.assertRaises(ValueError):
+                            check_context('sre', 'environment', '7', 'https://example.test/review', self.knowledge)
+                    else:
+                        report = check_context('sre', 'environment', '7', 'https://example.test/review', self.knowledge)
+                        self.assertTrue(report['checks']['grounded_runbook_citation'])
+                self.assertEqual(memories, {})
+                self.assertEqual(checkpoints, {})
+                question = next(body['incident']['summary'] for body in calls if 'incident' in body)
+                self.assertNotIn(self.retrieval['answer'], question)
+
     def test_promotion_and_rollback_preserve_auth_and_verify_route_readback(self):
         (self.root / 'azure.yaml').write_text((ROOT / 'azure.yaml').read_text())
         os.chdir(self.root)
-        endpoint = {'protocol_configuration': {'invocations': {}}, 'authorization_schemes': [{'type': 'Entra'}]}
+        endpoint = {'protocol_configuration': {'invocations': {}}, 'authorization_schemes': [{'type': 'Entra'}],
+                    'version_selector': {'version_selection_rules': [
+                        {'type': 'FixedRatio', 'agent_version': '6', 'traffic_percentage': 100}]}}
         after = copy.deepcopy(endpoint)
         after['version_selector'] = {'version_selection_rules': [
             {'type': 'FixedRatio', 'agent_version': '7', 'traffic_percentage': 100}]}
@@ -144,10 +212,12 @@ class ReleaseTests(unittest.TestCase):
                     'evaluation.release.azd', side_effect=['', json.dumps(current), json.dumps({'agent_endpoint': endpoint}),
                                                          '', json.dumps({'agent_endpoint': observed})]):
                 if observed == after:
-                    route('sre', '7', self.root)
+                    route('sre', '7', self.root, expected_version='6',
+                          review={'approved': True, 'url': 'https://example.test/review'})
                 else:
                     with self.assertRaisesRegex(ValueError, 'verified'):
-                        route('sre', '7', self.root)
+                        route('sre', '7', self.root, expected_version='6',
+                          review={'approved': True, 'url': 'https://example.test/review'})
         declaration = yaml.safe_load((self.root / 'azure.yaml').read_text())['services']['sre']
         self.assertEqual(declaration['agentEndpoint']['authorizationSchemes'], [{'type': 'Entra'}])
 

@@ -1,0 +1,72 @@
+# Consumer-specific subscription to the platform's existing Argo Events bus.
+# Bootstrap supplies the resource watch namespace and existing GitHub App metadata.
+# Agent execution is deployed independently by azure.yaml; no GitOps edit is needed.
+name: agent-catalog-sre
+namespace: agent-catalog-sre
+
+events:
+  githubTokens:
+    dispatch:
+      repository: ai-platform-portfolio/agent-catalog
+      permissions: {contents: write}
+
+  sources:
+    readiness:
+      resource:
+        readiness:
+          namespace: "" # Operator selects the investigation namespace.
+          group: ""
+          version: v1
+          resource: events
+          eventTypes: [ADD]
+          filter: {afterStart: false}
+
+  sensors:
+    readiness:
+      dependencies:
+        - name: readiness
+          eventSourceName: readiness # Chart resolves this local source key.
+          eventName: readiness
+          filters:
+            data:
+              - {path: type, type: string, value: ['^ADD$']}
+              - {path: body.type, type: string, value: ['^Warning$']}
+              - {path: body.reason, type: string, value: ['^Unhealthy$']}
+              - {path: body.message, type: string, value: ['^Readiness probe failed:']}
+              - {path: body.involvedObject.kind, type: string, value: ['^Pod$']}
+              - {path: body.involvedObject.name, type: string, value: ['^api-']}
+              - {path: body.metadata.uid, type: string, value: ['^[a-f0-9-]{36}$']}
+      triggers:
+        - template:
+            name: dispatch
+            http:
+              url: https://api.github.com/repos/ai-platform-portfolio/agent-catalog/dispatches
+              method: POST
+              timeout: 15
+              headers:
+                Accept: application/vnd.github+json
+                Content-Type: application/json
+              secureHeaders:
+                - name: Authorization
+                  valueFrom:
+                    secretKeyRef: {name: dispatch, key: authorization}
+              payload:
+                - src: {value: agent-incident}
+                  dest: event_type
+                - src: {value: sre}
+                  dest: client_payload.agent
+                - src: {dependencyName: readiness, dataKey: body.metadata.namespace}
+                  dest: client_payload.namespace
+                - src: {value: api}
+                  dest: client_payload.workload
+                - src: {dependencyName: readiness, dataKey: body.metadata.uid}
+                  dest: client_payload.event_uid
+          policy:
+            status: {allow: [204]}
+          retryStrategy: {steps: 3, duration: 5s, factor: 2}
+          rateLimit: {unit: Minute, requestsPerUnit: 2}
+
+platform:
+  lifecycle:
+    cleanup:
+      enabled: true

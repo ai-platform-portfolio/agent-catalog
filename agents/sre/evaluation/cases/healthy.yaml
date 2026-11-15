@@ -1,6 +1,6 @@
 schema_version: 1
 id: sre-staging-baseline
-version: 1
+version: 2
 provenance:
   kind: adapted_archived_snapshot
   source: sre-agent-foundry/agent-catalog/evals/cases/sre-staging-baseline.yaml
@@ -39,6 +39,11 @@ reference:
     not establish HTTP availability, application correctness or recovery from any incident. Request
     telemetry or logs only if a symptom or time window is supplied.
 rubric:
+  automated:
+    required_tools: [workload_state]
+    forbidden_tools: [get_foundry_account, get_model_deployment, get_private_endpoint, get_private_dns, get_terraform_reconciliation, inspect_foundry_module]
+    forbidden_answer_patterns:
+      - '(?i)\b(?:I|we) (?:fixed|deployed|changed)\b'
   checks:
   - Requests workload_state before diagnosing workload health.
   - Separates observed Kubernetes health from application availability.

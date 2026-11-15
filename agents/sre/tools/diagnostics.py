@@ -11,6 +11,12 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 TOOL_DESCRIPTIONS = {
+    'get_foundry_account': 'Read recorded Foundry account state and public inference evidence.',
+    'get_model_deployment': 'Read recorded model deployment configuration and state.',
+    'get_private_endpoint': 'Read recorded private endpoint and connection state.',
+    'get_private_dns': 'Read recorded private DNS records and zone group state.',
+    'get_terraform_reconciliation': 'Read recorded Terraform reconciliation evidence.',
+    'inspect_foundry_module': 'Read recorded Foundry module ownership and replacement wiring.',
     'workload_state': 'Read the approved workload and its selected Pods, including readiness and restart state.',
     'recent_events': 'Read bounded recent Kubernetes events for the approved workload.',
     'bounded_logs': 'Read at most 8 KiB of recent logs from one selected target Pod.',
@@ -28,10 +34,10 @@ def redact(value: str) -> str:
     return _FIELD.sub(r"\1[REDACTED]", _BEARER.sub(r"\1[REDACTED]", value))
 
 
-def target(incident: dict, allowed_namespace: str) -> tuple[str, str]:
+def target(incident: dict, allowed_namespace: str, allowed_workload: str) -> tuple[str, str]:
     namespace, workload = incident.get("namespace"), incident.get("workload")
-    if namespace != allowed_namespace or not isinstance(workload, str):
-        raise ValueError("Incident target must match the approved namespace")
+    if namespace != allowed_namespace or workload != allowed_workload or not isinstance(workload, str):
+        raise ValueError("Incident target must match the approved namespace and workload")
     if len(namespace) > 63 or len(workload) > 63 or not _DNS_LABEL.fullmatch(namespace) or not _DNS_LABEL.fullmatch(workload):
         raise ValueError("Incident target must use Kubernetes DNS labels")
     return namespace, workload
@@ -85,10 +91,13 @@ class KubernetesTools:
     source = 'live_kubernetes'
     descriptions = TOOL_DESCRIPTIONS
 
-    def __init__(self, api_client, allowed_namespace, metrics_client=None):
+    def __init__(self, api_client, allowed_namespace, allowed_workload, metrics_client=None):
         self.api, self.metrics = api_client, metrics_client
-        self.allowed_namespace = allowed_namespace
-        self.names = [name for name in TOOL_DESCRIPTIONS if name != 'service_metrics' or metrics_client]
+        self.allowed_namespace, self.allowed_workload = allowed_namespace, allowed_workload
+        self.state = None
+        self.names = ['workload_state', 'recent_events', 'bounded_logs']
+        if metrics_client is not None:
+            self.names.append('service_metrics')
 
     def _get(self, path, params=None):
         return json.loads(bounded_get(self.api, path, params))
@@ -100,10 +109,12 @@ class KubernetesTools:
     def _collect(self, name: str, incident: dict) -> dict:
         if name not in self.names:
             raise ValueError("Tool is not in the read-only registry")
-        namespace, workload = target(incident, self.allowed_namespace)
+        namespace, workload = target(incident, self.allowed_namespace, self.allowed_workload)
         prefix = f"/api/v1/namespaces/{quote(namespace)}"
 
         if name == "workload_state":
+            if self.state is not None:
+                return self.state
             kind = "Deployment"
             try:
                 deployment = self._get(f"/apis/apps/v1/namespaces/{quote(namespace)}/deployments/{quote(workload)}")
@@ -118,8 +129,9 @@ class KubernetesTools:
             label_selector = ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
             pods = self._get(f"{prefix}/pods", {"labelSelector": label_selector, "limit": 20})
             containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
-            return {
+            self.state = {
                 "deployment": {
+                    "uid": deployment["metadata"]["uid"],
                     "kind": kind,
                     "name": workload,
                     "generation": deployment.get("metadata", {}).get("generation"),
@@ -144,6 +156,7 @@ class KubernetesTools:
                 "pods": [
                     {
                         "name": pod["metadata"]["name"],
+                        "uid": pod["metadata"]["uid"],
                         "phase": pod.get("status", {}).get("phase"),
                         "restarts": sum(c.get("restartCount", 0) for c in pod.get("status", {}).get("containerStatuses", [])),
                         "waiting": [c.get("state", {}).get("waiting") for c in pod.get("status", {}).get("containerStatuses", []) if c.get("state", {}).get("waiting")],
@@ -160,11 +173,17 @@ class KubernetesTools:
                 "truncated": len(pods.get("items", [])) > 20 or bool(pods.get("metadata", {}).get("continue")),
             }
 
+            return self.state
+
         if name == "recent_events":
+            state = self._collect("workload_state", incident)
+            owners = {(state["deployment"]["kind"], state["deployment"]["uid"])}
+            owners.update(("Pod", pod["uid"]) for pod in state["pods"])
             events = self._get(f"{prefix}/events", {"limit": 100})
             items = sorted(
                 (event for event in events.get("items", [])
-                 if str(event.get("involvedObject", {}).get("name", "")).startswith(workload)),
+                 if (event.get("involvedObject", {}).get("kind"),
+                     event.get("involvedObject", {}).get("uid")) in owners),
                 key=lambda e: e.get("lastTimestamp") or e.get("eventTime") or "", reverse=True,
             )
             return {"events": [
@@ -173,6 +192,7 @@ class KubernetesTools:
                     "message": redact(str(event.get("message", "")))[:500],
                     "kind": event.get("involvedObject", {}).get("kind"),
                     "object": event.get("involvedObject", {}).get("name"),
+                    "object_uid": event["involvedObject"]["uid"],
                     "time": event.get("lastTimestamp") or event.get("eventTime"),
                 }
                 for event in items[:20]
@@ -204,7 +224,7 @@ def live_clients(credential):
     api = httpx.Client(
         base_url=https_url(os.environ['KUBE_API_URL']),
         auth=EntraAuth(credential, '6dae42f8-4368-4678-94ff-3960e28e3630/.default'),
-        verify=ssl.create_default_context(cafile=os.getenv('KUBE_CA_FILE')),
+        verify=ssl.create_default_context(cafile=os.getenv('KUBE_CA_FILE'), cadata=os.getenv('KUBE_CA_PEM') or None),
         timeout=8, follow_redirects=False,
     )
     metrics = None
@@ -215,10 +235,10 @@ def live_clients(credential):
     return api, metrics
 
 
-def validate_diagnosis(result, evidence):
+def validate_diagnosis(result, evidence, historical_context=None):
     """Case-study guard: model text alone cannot establish actionable evidence."""
     diagnosis = result['diagnosis']
-    if (not isinstance(diagnosis, dict) or set(diagnosis) != {'decision', 'answer', 'evidence'}
+    if (not isinstance(diagnosis, dict) or set(diagnosis) != {'decision', 'answer', 'evidence', 'citations'}
             or diagnosis['decision'] not in {'actionable', 'abstain'}
             or not isinstance(diagnosis['answer'], str) or not 20 <= len(diagnosis['answer']) <= 2500
             or not isinstance(diagnosis['evidence'], list)
@@ -226,6 +246,13 @@ def validate_diagnosis(result, evidence):
             or len(set(diagnosis['evidence'])) != len(diagnosis['evidence'])
             or not set(diagnosis['evidence']) <= set(evidence)):
         raise ValueError('Diagnosis must have the declared structure and cite only executed tools')
+    history = historical_context or {}
+    allowed = {memory['id'] for memory in history.get('memories', [])}
+    allowed.update(source['file_id'] for source in history.get('knowledge', {}).get('citations', []))
+    citations = diagnosis['citations']
+    if (not isinstance(citations, list) or any(not isinstance(value, str) for value in citations)
+            or len(citations) != len(set(citations)) or not set(citations) <= allowed):
+        raise ValueError('Historical citations must identify supplied sources only')
     if diagnosis['decision'] == 'actionable':
         if not {'workload_state', 'recent_events'} <= set(diagnosis['evidence']):
             raise ValueError('Actionable diagnosis requires workload and event evidence')

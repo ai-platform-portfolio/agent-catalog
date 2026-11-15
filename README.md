@@ -67,7 +67,7 @@ flowchart LR
 | HTTP protocol and health | [hosting/server.py](agents/sre/hosting/server.py), official Invocations adapter | Routes the public authenticated endpoint to port 8088; the adapter supplies `/readiness`, shutdown and tracing integration. |
 | Behaviour and model selection | [config/agent.yaml](agents/sre/config/agent.yaml), `MODEL_DEPLOYMENT_NAME` | Instructions and tool definitions are **inside the container**, sent with model requests; they are not separate portal prompt-agent resources. |
 | Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
-| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | Executes in the hosted container. Conversation/evidence are request-local; no database, durable memory or cross-request history is configured. |
+| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | The shared runtime executes in the hosted container. Conversation/evidence are request-local; authenticated live invocations also use native memory, historical knowledge and bounded checkpoints. Recorded evaluations bypass those stores. |
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
 | Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [image/requirements.txt](agents/sre/image/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
@@ -106,11 +106,18 @@ The investigation loop runs in the Foundry-hosted container. The model can reque
 with no arbitrary namespace, URL, shell command or tool arguments. Each tool can
 run once per investigation; request, time, output-token and evidence budgets bound
 work. Two investigations can run concurrently per container; additional requests
-wait. This is a small concurrency bound, not a measured autoscaling configuration.
+wait. Malformed caller inputs return HTTP 400; model, collector and storage
+failures return HTTP 502. Failure logs contain only operation, exception type and
+trace ID, omitting raw exception messages and request payloads. This is a small concurrency bound, not a measured autoscaling configuration.
 
-The SRE check requires workload and event evidence plus degraded readiness before
+Live collectors enforce both the configured namespace and workload. Events are
+matched to the current workload/selected Pod UIDs, not name prefixes; one
+request-local workload snapshot is reused for event and log collection. The SRE
+check requires workload and event evidence plus degraded readiness before
 accepting `actionable`. It does not establish that a proposed diagnosis is correct.
-The returned decision never triggers a deployment, patch or draft PR.
+An ordinary investigation response publishes no changes. The separate event
+workflow can pass an actionable live diagnosis into proposal, isolated validation
+and draft publication under the trusted coding policy. It never merges or deploys.
 
 ## Run and evaluate
 
@@ -241,8 +248,8 @@ existing project service; it is not redefined in the container environment becau
 Foundry injects that reserved value. The endpoint requires Entra authorization.
 
 Foundry versions a container definition, not each Python function separately.
-There are no managed connections, routines, skills, memory stores or toolboxes in
-this template. Operational spans cover investigations/model/tool calls;
+The native predeploy hook configures the memory store and publishes reviewed
+knowledge into a revision-specific file-search toolbox. Operational spans cover investigations/model/tool calls;
 message-content capture is explicitly disabled. Export has not been live-verified.
 Logs and redaction remain sensitive; common credential masking is not a DLP guarantee.
 
@@ -317,11 +324,12 @@ functions and case-specific result validation, then supply independent evaluatio
 cases. A new agent directory must use its directory name as the `azure.yaml`
 service key, preserve `${AZURE_ENV_NAME}` for repository/agent identity, and provide
 its own `image/Dockerfile` and pinned dependencies. The existing workflow discovers it.
-This PR deliberately keeps the pieces visible together; it does not claim the
-runtime has already been extracted into a centrally consumed library.
+The model/tool loop, evaluation contracts, native context and coding functions
+are consumed from the released shared runtime wheel. Agent configuration, tools,
+case-specific validation and workflow composition stay in this repository.
 
-The archive is a source reference, not a runtime dependency. `runtime/agent.py` adapts
-its `model.py` and bounded replay loop; `tools/diagnostics.py` adapts `diagnostics.py` and the
+The archive is a source reference, not a runtime dependency. `runtime/agent.py` binds
+the shared model client and bounded loop; `tools/diagnostics.py` retains diagnostic collection and the
 triage guard; `hosting/server.py` retains the official adapter approach. Cases retain
 source provenance. The archive remains available for the original implementation history.
 
@@ -330,3 +338,110 @@ Sources: [archived source map](https://github.com/sre-agent-foundry),
 [native azure.yaml](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
 [deployment and identity](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
 [protocol adapter](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-protocol-adapter).
+
+## Complete restoration source — AI-245 (not deployed)
+
+The milestone contains all three archived cases and all six automated checks,
+model endpoint/audience overrides, explicit approval reference, expected serving
+version and rollback reason. The Azure fixture tools are replay-only. Live
+Kubernetes tools remain namespace-scoped reads, with an optional authenticated
+metrics endpoint; generated proposals never execute inside Foundry.
+
+```mermaid
+flowchart LR
+  K[Kubernetes readiness Event] --> A[Argo Events subscription]
+  A --> G[GitHub dispatch]
+  G --> I[Foundry investigator]
+  I --> S[Native state and memory]
+  I --> R[Reviewed file-search toolbox]
+  I --> F[Exact-base source fetch]
+  F --> P[Foundry proposer]
+  P --> V[Isolated Docker validation]
+  V --> D[Scoped draft PR publisher]
+  I --> O[OTel collector and Langfuse]
+```
+
+| Component | Owner/location |
+| --- | --- |
+| Thin runtime binding, instructions and case-study tools | `agents/sre/runtime`, `config`, `tools` |
+| Foundry protocol adapter and composition | `agents/sre/hosting` |
+| Model/tool loop, grading, native memory/state, knowledge, intake and bounded coding capabilities | Released `application-library/agent-runtime` package |
+| Event/credential/RBAC templates | `application-helm-chart/templates/events` and `templates/credentials` |
+| Publication and incident orchestration | `deploy-agents.yml` and `incident.yml`; separate lifecycle purposes |
+| Scalar native invocation and scoped App token actions | `ops-shared` |
+| Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
+
+The released `portfolio-agent-runtime` 0.1.0 wheel is pinned by its actual release
+URL and SHA256 in `image/requirements.txt`. Its bytes match the attached checksums,
+GitHub asset digest and merged library sources. Memory, the native predeploy hook
+and runtime environment fields are enabled in source. Image-build evidence and
+hosted acceptance are separate: publication of a wheel does not prove deployment.
+
+The developer intent for memory is `memory.enabled: true`,
+`memory.retention_days: 30`, and `knowledge.path: knowledge`. Only reviewed public
+Markdown goes into the project-shared toolbox. Personal memory and checkpoints
+use the Foundry-authenticated caller. Reviewed remember, recall, named/all-memory
+forget, checkpoint resume and checkpoint deletion are explicit operations.
+Recorded evaluations bypass persistence and retrieval; historical context cannot
+satisfy current readiness evidence guards.
+
+`incident.yml` uses one trusted orchestration job and installs its capabilities
+once. The current reviewed caller policy governs writes; an agent-supplied source
+revision never selects executable host code or publication policy. The same pinned
+Foundry version investigates and proposes. Validation runs in a non-root Docker
+sandbox with no credentials, network, host environment, socket or artifact mounts.
+Publication credentials are minted only after validation succeeds. Trusted host
+steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
+overwrite another proposal or reopen a closed incident PR.
+
+The optional subscription is configured in `deploy/events.yaml` using the
+application chart's generic native `events.sources` / `events.sensors` interface.
+Readiness filters, the GitHub destination and incident payload live here, not in
+shared templates. The chart uses one shared ServiceAccount for this subscription,
+wires its namespace-scoped watch permissions and delivers the selected expiring
+GitHub token. No catalog-specific change in GitOps is required.
+
+At bootstrap the operator selects
+`events.sources.readiness.resource.readiness.namespace` and supplies existing App
+metadata through `platform.events.github`. The emitted event supplies its namespace
+to the payload. The Pod filter and workload payload select `api`; change both when
+selecting another workload. Configure the actual Foundry **instance identity**'s
+read-only target Role/RoleBinding through the chart's existing
+`platform.credentials.roles` / `roleBindings` values, separately from event watch
+permissions. No Foundry reader identity or policy is hardcoded into the generic
+event templates. Render only `templates/argocd/application.yaml` initially; child
+reconciliation registers nothing. Event and operator credential inputs are passed
+through by that registration. No subscription was applied by this source change.
+
+AKS test inputs are optional **repository-level** configuration:
+`AGENT_DIAGNOSTICS_BACKEND=kubernetes`, `KUBE_API_URL`, public `KUBE_CA_PEM`,
+`KUBE_ALLOWED_NAMESPACE` and `KUBE_ALLOWED_WORKLOAD`. They introduce no AKS org
+variable dependency. The current public-only AKS API does not become reachable
+from Foundry merely because VNets are peered; no network settings have changed.
+Register the subscription only after the chosen target is reachable and its
+read-only RoleBinding is reconciled. Provided-evidence cases remain independent
+of an available AKS cluster.
+
+`evaluation/context.py` checks new-session recall, checkpoint resume and deletion
+using synthetic records, and cleans up only its own records. Its checkpoint
+investigation asks a runbook question without supplying the expected answer. The
+answer must cite the retrieved `readiness.md` file with matching source metadata
+and revision; the record retains the answer, source citations, trace and deployment.
+Promotion/rollback revalidate that evidence against the published manifest and
+immutable release, rather than accepting a publication manifest alone. These
+checks are implemented but have not run against the hosted candidate. Container
+restart, a second genuinely authenticated caller, server TTL enforcement, live
+diagnostics/traces and the controlled event-to-draft chain remain live acceptance gates. Merging source does not prove any of them.
+
+Stop/delete the event subscription before retiring the hosted agent; drain or
+cancel active incident runs. Retain earlier versions and their knowledge manifests
+for rollback. Delete retired knowledge with the shared ownership-checked cleanup
+function after no live version references it. Native agent/project deletion and
+memory retention are distinct from keeping source runbooks in Git.
+
+
+Duplicate Event deliveries do not start another handoff. Use GitHub's native
+**Re-run failed jobs** on the original run to resume a failed handoff: its run ID
+and incident branch stay stable. A changed proposal/base fails closed rather than
+silently replacing a draft. The isolation boundary is the tested Docker sandbox,
+not a claim of separate virtual machines for every trusted orchestration step.
