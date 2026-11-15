@@ -254,6 +254,15 @@ def validate_diagnosis(result, evidence, historical_context=None):
             or len(citations) != len(set(citations)) or not set(citations) <= allowed):
         raise ValueError('Historical citations must identify supplied sources only')
     if diagnosis['decision'] == 'actionable':
+        azure_tools = {'get_foundry_account', 'get_model_deployment', 'get_private_endpoint',
+                       'get_private_dns', 'get_terraform_reconciliation', 'inspect_foundry_module'}
+        if result.get('evidence_source') == 'caller_provided' and set(evidence) <= azure_tools:
+            required = {'get_private_endpoint', 'get_private_dns',
+                        'get_terraform_reconciliation', 'inspect_foundry_module'}
+            if not required <= set(diagnosis['evidence']):
+                raise ValueError('Actionable Azure diagnosis requires endpoint, DNS and reconciliation/module evidence')
+            # Recorded Azure evidence cannot satisfy the live coding handoff policy.
+            return result
         if not {'workload_state', 'recent_events'} <= set(diagnosis['evidence']):
             raise ValueError('Actionable diagnosis requires workload and event evidence')
         state = evidence['workload_state'].get('deployment', {})

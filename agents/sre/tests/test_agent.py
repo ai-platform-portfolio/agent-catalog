@@ -1,6 +1,7 @@
 import copy
 import json
 from pathlib import Path
+import tempfile
 import time
 from types import SimpleNamespace
 import unittest
@@ -10,6 +11,7 @@ import httpx
 from starlette.testclient import TestClient
 
 from evaluation.run import load_case, score
+from portfolio_agent_runtime.handoff import prepare
 from runtime.agent import load_config, model_client, run
 from hosting.server import build_app, investigate
 from tools.diagnostics import EntraAuth, KubernetesTools, ProvidedTools, bounded_get, validate_diagnosis
@@ -143,7 +145,9 @@ class AgentTests(unittest.TestCase):
     def test_archived_azure_case_and_forbidden_tool_check_are_retained(self):
         case, payload = load_case(ROOT / 'evaluation/cases/ai-190-foundry-private-endpoint.yaml')
         calls = case['rubric']['automated']['required_tools']
-        result = investigate(payload, load_config(), Model(calls))
+        result = investigate(payload, load_config(), Model(calls, 'actionable'))
+        self.assertEqual(result['diagnosis']['decision'], 'actionable')
+        self.assertEqual(result['evidence_source'], 'caller_provided')
         self.assertEqual(case['version'], 2)
         self.assertEqual(score(case, result, load_config())['status'], 'human_review_required')
         self.assertEqual(len(score(case, result, load_config())['checks']), 6)
@@ -151,6 +155,34 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(score(case, result, load_config())['checks']['forbidden_tools'])
         live = KubernetesTools(Mock(), 'approved', 'api')
         self.assertNotIn('get_private_endpoint', live.names)
+
+    def test_azure_actionable_evidence_cannot_bypass_readiness_or_live_handoff_guards(self):
+        case, payload = load_case(ROOT / 'evaluation/cases/ai-190-foundry-private-endpoint.yaml')
+        calls = case['rubric']['automated']['required_tools']
+        result = investigate(payload, load_config(), Model(calls, 'actionable'))
+        evidence = {name: payload['evidence'][name] for name in calls}
+        for missing in calls:
+            incomplete = copy.deepcopy(result)
+            incomplete['diagnosis']['evidence'].remove(missing)
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, 'Actionable Azure diagnosis'):
+                validate_diagnosis(incomplete, {name: value for name, value in evidence.items() if name != missing})
+        live = {**result, 'evidence_source': 'live_kubernetes'}
+        with self.assertRaisesRegex(ValueError, 'workload and event evidence'):
+            validate_diagnosis(live, evidence)
+        _, healthy = load_case(ROOT / 'evaluation/cases/healthy.yaml')
+        mixed = copy.deepcopy(result)
+        mixed['diagnosis']['evidence'].extend(['workload_state', 'recent_events'])
+        with self.assertRaisesRegex(ValueError, 'degraded readiness'):
+            validate_diagnosis(mixed, {**evidence, **healthy['evidence']})
+        # Exercise the real caller policy: recorded Azure diagnoses cannot fetch source or publish.
+        result['trace_id'] = 'a' * 32
+        with tempfile.TemporaryDirectory() as directory:
+            investigation = Path(directory) / 'investigation.json'
+            investigation.write_text(json.dumps(result))
+            with patch('portfolio_agent_runtime.handoff.coding.github') as github:
+                with self.assertRaisesRegex(ValueError, 'declared evidence'):
+                    prepare(ROOT / 'config/coding.yaml', investigation, Path(directory) / 'handoff', 'azure-case')
+                github.assert_not_called()
 
     def test_live_tools_reject_cross_targets_and_correlate_event_uids(self):
         requests = []
