@@ -67,7 +67,7 @@ flowchart LR
 | HTTP protocol and health | [hosting/server.py](agents/sre/hosting/server.py), official Invocations adapter | Routes the public authenticated endpoint to port 8088; the adapter supplies `/readiness`, shutdown and tracing integration. |
 | Behaviour and model selection | [config/agent.yaml](agents/sre/config/agent.yaml), `MODEL_DEPLOYMENT_NAME` | Instructions and tool definitions are **inside the container**, sent with model requests; they are not separate portal prompt-agent resources. |
 | Model injection/authentication | [runtime/agent.py](agents/sre/runtime/agent.py), `model_client` | Injects `FOUNDRY_PROJECT_ENDPOINT`; Azure Identity obtains short-lived tokens for the project model API. |
-| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | The shared runtime executes in the hosted container. Conversation/evidence are request-local; authenticated live invocations also use native memory, historical knowledge and bounded checkpoints. Recorded evaluations bypass those stores. |
+| Agent loop and working state | [runtime/agent.py](agents/sre/runtime/agent.py), `run` | The shared runtime executes in the hosted container. Conversation/evidence are request-local; authenticated live invocations use approved notes in native JSON state, gateway-backed knowledge and bounded checkpoints. Recorded evaluations bypass those stores. |
 | SRE tools and decision checks | [tools/diagnostics.py](agents/sre/tools/diagnostics.py) | Executes these Python functions in the container, not as managed Foundry toolbox resources. |
 | Image and dependencies | [image/Dockerfile](agents/sre/image/Dockerfile), [image/requirements.txt](agents/sre/image/requirements.txt) | Pulls the immutable amd64 image from ACR. Runtime contains the application and its locked Python dependencies. |
 | Evaluation | [evaluation/run.py](agents/sre/evaluation/run.py), [cases](agents/sre/evaluation/cases), [tests](agents/sre/tests/test_agent.py) | Online evaluation invokes the hosted endpoint; offline contract tests need no Azure access. |
@@ -200,27 +200,27 @@ live-tool evaluation can be claimed. A live backend rejects caller-provided evid
 
 ### Model connection intent
 
-Direct Foundry remains selected by the existing deployment workflow:
+This source selects `gatewayAccess: {policy: bounded-agent}` in agent intent.
+Shared templates supply the endpoint, task aliases and versionless capability
+secret references; the native Foundry identity reads only its scoped secrets.
+Investigation, coding and embeddings use separate capability clients with no
+provider fallback. No inline gateway key or infrastructure manifest belongs here.
 
-```yaml
-MODEL_CONNECTION_MODE: foundry
-MODEL_AUTH_METHOD: entra
-MODEL_DEPLOYMENT_NAME: chat
-```
+Deployment first resolves public chart connections, deploys/reads the native
+principal, then registers chart-owned credentials before candidate evaluation.
+It requires the actual released runtime with `[foundry]`, immutable shared pins,
+trusted SRE ceilings and the management AKS settings published by existing startup.
+The runtime remains in Foundry; LiteLLM inference availability depends on AKS.
 
-Optional repository variables with those names override the intent. Existing
-`MODEL_BASE_URL` and `MODEL_TOKEN_SCOPE` overrides remain available. The native
-predeploy hook forwards validated configuration to the hosted container; model
-selection is no longer hardcoded in `azure.yaml`. `memory.chat_model: chat` remains
-independent of inference selection. Foundry hosting, state and retrieval retain
-their project connection.
-
-Future `gateway` mode requires an explicit HTTPS `MODEL_BASE_URL`, model and
-authentication method. `api_key` uses the optional repository secret `MODEL_API_KEY`;
-`entra` requires the gateway's explicit `MODEL_TOKEN_SCOPE`. Missing settings or
-upstream failures do not fall back to Foundry. No gateway key, provider route or
-network change is created here. Key issuance, rotation/revocation and secure hosted
-delivery need their own approved integration; gateway mode remains unselected.
+New notes and runbook retrieval use gateway embeddings plus native JSON state.
+An existing managed-memory store requires the operator's fixed
+`LEGACY_MEMORY_UNTIL` deadline; the transition uses no legacy semantic search or
+creation. Checkpoints and event deduplication retain native isolated storage.
+Runbooks are bundled in the image and checked against their revision-pinned manifest.
+Public connection readback is retained in acceptance artifacts and promotion rejects
+mismatched capability configuration. This establishes configuration evidence only;
+provider bypass denial, accounting, second-caller/restart/TTL and incident-to-draft
+behavior remain explicit live gates. Claude/Gemini are not configured by this scope.
 
 `make foundry-up`, `make aks-up` and `make up` in GitOps invoke this existing
 `deploy-agents.yml` workflow after foundation settings are refreshed. The workflow
@@ -266,8 +266,8 @@ action with that digest. It never uses a last-writer matrix output as a digest
 map. Per-agent concurrency serializes this workflow's deployments; it is not a
 cloud-wide deployment lock. Source and dependency tests stay in the agent build.
 
-Bootstrap now refreshes organization variables `FOUNDRY_PROJECT_ENDPOINT` and
-`AZURE_LOCATION`; no per-repository copy is needed. Repository/environment values
+Bootstrap now refreshes organization variables `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_PROJECT_ID`,
+`AZURE_LOCATION`, `AKS_NAME` and `AKS_RESOURCE_GROUP`; no per-repository copy is needed. Repository/environment values
 can shadow them. GitHub Free exposes organization variables to public consumers.
 The existing organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
 `AZURE_SUBSCRIPTION_ID` authenticate CI through OIDC. Foundry creates a separate
@@ -282,8 +282,9 @@ existing project service; it is not redefined in the container environment becau
 Foundry injects that reserved value. The endpoint requires Entra authorization.
 
 Foundry versions a container definition, not each Python function separately.
-The native predeploy hook configures the memory store and publishes reviewed
-knowledge into a revision-specific file-search toolbox. Operational spans cover investigations/model/tool calls;
+The native predeploy hook discovers legacy metadata without creating memory and
+builds reviewed runbook provenance without model calls. Runtime embeddings are
+lazy and charged to its own gateway consumer. Operational spans cover investigations/model/tool calls;
 message-content capture is explicitly disabled. Export has not been live-verified.
 Logs and redaction remain sensitive; common credential masking is not a DLP guarantee.
 
@@ -373,7 +374,7 @@ Sources: [archived source map](https://github.com/sre-agent-foundry),
 [deployment and identity](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
 [protocol adapter](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-protocol-adapter).
 
-## Complete restoration source — AI-245 (not deployed)
+## Restored behavior and gateway adoption source
 
 The milestone contains all three archived cases and all six automated checks,
 model endpoint/audience overrides, explicit approval reference, expected serving
@@ -386,8 +387,8 @@ flowchart LR
   K[Kubernetes readiness Event] --> A[Argo Events subscription]
   A --> G[GitHub dispatch]
   G --> I[Foundry investigator]
-  I --> S[Native state and memory]
-  I --> R[Reviewed file-search toolbox]
+  I --> S[Native isolated JSON notes and checkpoints]
+  I --> R[Reviewed runbooks with gateway embeddings]
   I --> F[Exact-base source fetch]
   F --> P[Foundry proposer]
   P --> V[Isolated Docker validation]
@@ -399,13 +400,13 @@ flowchart LR
 | --- | --- |
 | Thin runtime binding, instructions and case-study tools | `agents/sre/runtime`, `config`, `tools` |
 | Foundry protocol adapter and composition | `agents/sre/hosting` |
-| Model/tool loop, grading, native memory/state, knowledge, intake and bounded coding capabilities | Released `application-library/agent-runtime` package |
+| Model/tool loop, grading, native JSON context, knowledge, intake and bounded coding capabilities | Released `application-library/agent-runtime` package |
 | Event/credential/RBAC templates | `application-helm-chart/templates/events` and `templates/credentials` |
 | Publication and incident orchestration | `deploy-agents.yml` and `incident.yml`; separate lifecycle purposes |
 | Scalar native invocation and scoped App token actions | `ops-shared` |
 | Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
 
-The released `portfolio-agent-runtime` 0.1.6 wheel is pinned by its actual release
+The released `portfolio-agent-runtime[foundry]` 0.1.8 wheel is pinned by its actual release
 URL and SHA256 in `image/requirements.txt`. Its bytes match the attached checksums,
 GitHub asset digest and merged library sources. Memory, the native predeploy hook
 and runtime environment fields are enabled in source. Image-build evidence and

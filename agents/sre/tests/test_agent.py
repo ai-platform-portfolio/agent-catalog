@@ -54,16 +54,27 @@ class Model:
 
 
 class AgentTests(unittest.TestCase):
-    def test_native_model_wiring_preserves_foundry_context_and_declares_memory_model(self):
+    def test_gateway_intent_blocks_implicit_direct_model_evaluation(self):
+        import os
+        with patch.dict(os.environ, {'MODEL_CONNECTION_MODE': 'foundry'}), \
+             patch('runtime.agent.shared_model_client') as create:
+            with self.assertRaisesRegex(ValueError, 'gateway intent'):
+                model_client(None)
+            create.assert_not_called()
+
+    def test_gateway_wiring_preserves_foundry_hosting_and_scoped_capabilities(self):
         import yaml
         declaration = yaml.safe_load((ROOT / 'azure.yaml').read_text())
         self.assertEqual(declaration['services']['foundry']['endpoint'], '${FOUNDRY_PROJECT_ENDPOINT}')
         env = declaration['services']['sre']['env']
         for name in ('MODEL_CONNECTION_MODE', 'MODEL_AUTH_METHOD', 'MODEL_DEPLOYMENT_NAME',
-                     'MODEL_BASE_URL', 'MODEL_TOKEN_SCOPE', 'MODEL_API_KEY'):
+                     'MODEL_BASE_URL', 'MODEL_TOKEN_SCOPE', 'MODEL_API_KEY_SECRET_URI',
+                     'CODING_MODEL_API_KEY_SECRET_URI', 'EMBEDDING_MODEL_API_KEY_SECRET_URI',
+                     'EMBEDDING_MODEL_VERSION', 'LEGACY_MEMORY_UNTIL'):
             self.assertEqual(env[name], '${' + name + '}')
         self.assertNotIn('FOUNDRY_PROJECT_ENDPOINT', env)
-        self.assertEqual(load_config()['memory']['chat_model'], 'chat')
+        self.assertEqual(load_config()['gatewayAccess'], {'policy': 'bounded-agent'})
+        self.assertNotIn('MODEL_API_KEY', env)
 
     def test_complete_fault_investigation_uses_one_loop_and_withholds_grader(self):
         case, payload = load_case(ROOT / 'evaluation/cases/readiness-fault.yaml')
@@ -131,22 +142,9 @@ class AgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run({'summary': 'fault', 'rubric': {}}, config, Model(), ProvidedTools({}))
 
-    def test_model_endpoint_and_identity_are_injected_without_a_secret(self):
-        credential = Mock(spec=['get_token'])
-        credential.get_token.return_value = SimpleNamespace(token='short-lived-test-token', expires_on=time.time() + 3600)
-        with patch('portfolio_agent_runtime.agent.OpenAI') as constructor:
-            model_client(credential, 'https://example.services.ai.azure.com/api/projects/demo')
-            self.assertEqual(constructor.call_args.kwargs['base_url'],
-                             'https://example.services.ai.azure.com/api/projects/demo/openai/v1/')
-            self.assertEqual(constructor.call_args.kwargs['api_key'](), 'short-lived-test-token')
-            credential.get_token.assert_called_with('https://ai.azure.com/.default')
-        for endpoint in ['http://example.test', 'https://user:secret@example.test',
-                         'https://:secret@example.test', 'https://example.test/?token=secret']:
-            with self.assertRaises(ValueError):
-                model_client(credential, endpoint)
-
     def test_model_gateway_override_preserves_its_url_and_uses_declared_audience(self):
-        with patch.dict('os.environ', {'MODEL_BASE_URL': 'https://gateway.test/models/v1',
+        with patch.dict('os.environ', {'MODEL_CONNECTION_MODE': 'gateway', 'MODEL_AUTH_METHOD': 'entra',
+                                       'MODEL_DEPLOYMENT_NAME': 'reasoning', 'MODEL_BASE_URL': 'https://gateway.test/models/v1',
                                        'MODEL_TOKEN_SCOPE': 'https://gateway.test/.default'}):
             with patch('portfolio_agent_runtime.agent.OpenAI') as constructor, patch('portfolio_agent_runtime.agent.get_bearer_token_provider') as provider:
                 model_client(Mock())
@@ -326,7 +324,7 @@ class AgentTests(unittest.TestCase):
                                        'FOUNDRY_PROJECT_ENDPOINT': 'https://example.test/api/projects/test',
                                        'FOUNDRY_AGENT_NAME': 'test-agent', 'MEMORY_STORE_NAME': 'test-memory',
                                        'KNOWLEDGE_MANIFEST_JSON': '{"toolbox":"test","sources":[]}'}):
-            with patch('azure.ai.projects.AIProjectClient'), patch(
+            with patch('azure.ai.projects.AIProjectClient'), patch('hosting.server.model_client'), patch(
                     'hosting.server.persistent_invoke', new_callable=AsyncMock) as persistent:
                 with TestClient(build_app(client=Model(['workload_state']), configure_observability=None)) as client:
                     response = client.post('/invocations', json=payload)

@@ -76,7 +76,8 @@ def check(service, environment, version, review, knowledge):
         investigation_id = None
         if not all(checks.values()):
             raise ValueError('Native durable context acceptance failed')
-        return {'version': version, 'checks': checks, 'retrieval': retrieval, 'cleaned_stale_test_memories': cleaned,
+        return {'version': version, 'checks': checks, 'retrieval': retrieval,
+                'model_connection': investigated.get('model_connection'), 'cleaned_stale_test_memories': cleaned,
                 'limits': 'New sessions only; container restart, server TTL and a second authenticated caller remain live gates.'}
     finally:
         # Delete only this test's records, never the integration caller's other memory.

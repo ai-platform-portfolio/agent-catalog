@@ -47,6 +47,13 @@ def validate_evidence(directory, agent, version):
         if (context.get('version') != version or set(context.get('checks', {})) != required
                 or not all(value is True for value in context['checks'].values())):
             raise ValueError('Missing or failed native context acceptance')
+        expected = json.loads((directory / 'gateway.json').read_text())
+        connection = {'mode': expected['MODEL_CONNECTION_MODE'],
+                      'models': {capability: expected[prefix + 'MODEL_DEPLOYMENT_NAME']
+                                 for capability, prefix in [('default', ''), ('coding', 'CODING_'), ('embedding', 'EMBEDDING_')]},
+                      'embedding_version': expected['EMBEDDING_MODEL_VERSION']}
+        if connection['mode'] != 'gateway' or context.get('model_connection') != connection:
+            raise ValueError('Hosted connection differs from the reviewed gateway capability mapping')
         knowledge = json.loads((directory / 'knowledge.json').read_text())
         if knowledge.get('revision') != release['source_revision'] or not knowledge.get('sources'):
             raise ValueError('Knowledge publication does not match the immutable release')

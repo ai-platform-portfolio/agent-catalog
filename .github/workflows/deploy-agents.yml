@@ -46,6 +46,9 @@ on:
         description: Required reason for rollback (10-2048 characters).
         type: string
 
+env:
+  APPLICATION_CHART_REVISION: e8053eba011a9fe28fec997d723b20670795bac8 # native hosted gateway credentials
+
 permissions:
   contents: read
 
@@ -189,6 +192,32 @@ jobs:
           "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
           echo "$RUNNER_TEMP/evaluation-venv/bin" >> "$GITHUB_PATH"
 
+      - name: Check out the reviewed application chart
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ai-platform-portfolio/application-helm-chart
+          ref: ${{ env.APPLICATION_CHART_REVISION }}
+          path: .application-chart
+          persist-credentials: false
+
+      - name: Authenticate for native gateway access
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve chart-owned public model connections
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@229d3b22cbbfc9625a0166528e5818f865c9f842
+        with:
+          operation: configure
+          service: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          working-directory: agents/${{ matrix.agent }}
+          chart-directory: .application-chart
+          chart-revision: ${{ env.APPLICATION_CHART_REVISION }}
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+          cluster: ${{ vars.AKS_NAME }}
+
       - name: Deploy prebuilt digest with native azd
         id: candidate
         uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@38a239a1068f766437a043c8a0d3fac337e71601
@@ -208,13 +237,8 @@ jobs:
           traces-endpoint: ${{ vars.AGENT_TRACES_ENDPOINT }}
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-          # Optional case-study inputs stay at repository level, never org-wide.
-          MODEL_CONNECTION_MODE: ${{ vars.MODEL_CONNECTION_MODE || 'foundry' }}
-          MODEL_AUTH_METHOD: ${{ vars.MODEL_AUTH_METHOD || 'entra' }}
-          MODEL_DEPLOYMENT_NAME: ${{ vars.MODEL_DEPLOYMENT_NAME || 'chat' }}
-          MODEL_BASE_URL: ${{ vars.MODEL_BASE_URL }}
-          MODEL_TOKEN_SCOPE: ${{ vars.MODEL_TOKEN_SCOPE }}
-          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          # Model connection metadata comes from the shared chart, never inline keys.
+          LEGACY_MEMORY_UNTIL: ${{ vars.LEGACY_MEMORY_UNTIL }}
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
           AGENT_DIAGNOSTICS_BACKEND: ${{ vars.AGENT_DIAGNOSTICS_BACKEND || 'provided' }}
@@ -222,6 +246,18 @@ jobs:
           KUBE_CA_PEM: ${{ vars.KUBE_CA_PEM }}
           KUBE_ALLOWED_NAMESPACE: ${{ vars.KUBE_ALLOWED_NAMESPACE }}
           KUBE_ALLOWED_WORKLOAD: ${{ vars.KUBE_ALLOWED_WORKLOAD }}
+
+      - name: Reconcile credentials for the actual native principal
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@229d3b22cbbfc9625a0166528e5818f865c9f842
+        with:
+          operation: apply
+          service: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          working-directory: agents/${{ matrix.agent }}
+          chart-directory: .application-chart
+          chart-revision: ${{ env.APPLICATION_CHART_REVISION }}
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+          cluster: ${{ vars.AKS_NAME }}
+          release-record: ${{ steps.candidate.outputs.record }}
 
       - name: Evaluate the exact hosted candidate
         working-directory: agents/${{ matrix.agent }}
@@ -235,6 +271,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/acceptance"
           cp "$RELEASE_RECORD" "$RUNNER_TEMP/acceptance/release.json"
+          cp "$RUNNER_TEMP/gateway-$AZURE_ENV_NAME/connection.json" "$RUNNER_TEMP/acceptance/gateway.json"
           for case in evaluation/cases/*.yaml; do
             "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.run "$case" --mode hosted \
               --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \

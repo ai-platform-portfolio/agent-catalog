@@ -119,6 +119,10 @@ class ReleaseTests(unittest.TestCase):
             'recall_in_new_session': True, 'checkpoint_in_new_session': True,
             'forget_memory': True, 'forget_checkpoint': True, 'grounded_runbook_citation': True},
             'retrieval': self.retrieval}
+        self.connection = {'mode': 'gateway', 'models': {'default': 'reasoning', 'coding': 'coding', 'embedding': 'embedding'}, 'embedding_version': '1'}
+        self.context['model_connection'] = self.connection
+        (self.root / 'gateway.json').write_text(json.dumps({'MODEL_CONNECTION_MODE': 'gateway', 'MODEL_DEPLOYMENT_NAME': 'reasoning',
+            'CODING_MODEL_DEPLOYMENT_NAME': 'coding', 'EMBEDDING_MODEL_DEPLOYMENT_NAME': 'embedding', 'EMBEDDING_MODEL_VERSION': '1'}))
         (self.root / 'context.json').write_text(json.dumps(self.context))
         (self.root / 'knowledge.json').write_text(json.dumps(self.knowledge))
         for path in Path('evaluation/cases').glob('*.yaml'):
@@ -176,7 +180,7 @@ class ReleaseTests(unittest.TestCase):
                         return {'memories': [{'id': key, 'content': value} for key, value in memories.items()]}
                     if operation is None:
                         checkpoints['investigation'] = {'trace_id': self.retrieval['trace_id']}
-                        return {'investigation_id': 'investigation', 'deployment': self.release,
+                        return {'investigation_id': 'investigation', 'deployment': self.release, 'model_connection': self.connection,
                                 'trace_id': self.retrieval['trace_id'], 'diagnosis': {
                                     'answer': self.retrieval['answer'], 'citations': [] if fails else ['file-reviewed']},
                                 'context': {'knowledge': {'citations': [self.source]}}}

@@ -11,6 +11,7 @@ FROM base AS build
 COPY image/requirements.txt ./
 RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.txt
 
+COPY knowledge ./knowledge
 COPY config ./config
 COPY runtime ./runtime
 COPY hosting ./hosting
@@ -25,6 +26,7 @@ RUN /opt/venv/bin/python -m unittest discover -s tests -v
 FROM base AS runtime
 
 COPY --from=build /opt/venv /opt/venv
+COPY knowledge ./knowledge
 COPY config ./config
 COPY runtime ./runtime
 COPY hosting ./hosting

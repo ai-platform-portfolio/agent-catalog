@@ -184,6 +184,9 @@ azure-ai-agentserver-core==2.3.0 \
 azure-ai-agentserver-invocations==1.3.0 \
     --hash=sha256:e3e991e467ca66cb06a437dfe373e23751e1d8de6a0374c9d83f83dba0d31d8e \
     --hash=sha256:e6a579f1a212df860b1dff2c0664fd722caed74b7d02237f3fff5ccc079b32ae
+azure-ai-projects==2.11.0 \
+    --hash=sha256:add3f4cc37724abbc3bae4fe2bcfa2b11bd70fc19bc1f1fc68c453532b05c393 \
+    --hash=sha256:eda340da7cabffd0b05b4b5bb8c6c8a5b7a5a8fca495785a1097f2fec8c153f8
 azure-core==1.41.0 \
     --hash=sha256:522b4011e8180b1a3dcd2024396a4e7fe9ac37fb8597db47163d230b5efe892d \
     --hash=sha256:f46ff5dfcd230f25cf1c19e8a34b8dc08a337b2503e268bb600a16c00db8ad5a
@@ -193,9 +196,15 @@ azure-core-tracing-opentelemetry==1.0.0b13 \
 azure-identity==1.27.0 \
     --hash=sha256:6a4c50e25e8e9a47b324a95ad024897e56cb3c6241e0094e93b126a2bf71edc5 \
     --hash=sha256:92fd2a93c0d2f777dac6c04e5fd7d5734f6643582b983544ef66b4575844e46d
+azure-keyvault-secrets==4.12.0 \
+    --hash=sha256:435ea0abb5280baaad9553da7a19e73e1b581048783b852210352bfcb0316aff \
+    --hash=sha256:ec5ff84ee0a045094e62d38e9b962769003e60fe7396d8dcf1ac4c78e7d010c6
 azure-monitor-opentelemetry-exporter==1.0.0b59 \
     --hash=sha256:0dfaec6b1aada54a4c8f4572fd1e1da67609459caf418298b5d91b4c67c0282e \
     --hash=sha256:e831b74132fb899e640cddbb340f0fbfe11937f788715ce3f0acd120c8e91227
+azure-storage-blob==12.31.1 \
+    --hash=sha256:0d6e5b860a1357efc602db04cfa7c9950ac86126edcf7db89320cde281555fe5 \
+    --hash=sha256:9e012d5f4ab658b7cb8a4581329d7a7aa2bf5f39b4d63baeefaae7f9e90fe6f0
 certifi==2026.10.23 \
     --hash=sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd \
     --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
@@ -1057,6 +1066,10 @@ opentelemetry-util-http==0.66b2 \
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+portfolio-agent-observability @ https://github.com/ai-platform-portfolio/application-library/releases/download/observability-v0.1.0/portfolio_agent_observability-0.1.0-py3-none-any.whl \
+    --hash=sha256:56deb0686191ef756c815539a5d963309d13cf4a22200a9ac6eb17ef5a3755fe
+portfolio-agent-runtime[foundry] @ https://github.com/ai-platform-portfolio/application-library/releases/download/agent-runtime-v0.1.8/portfolio_agent_runtime-0.1.8-py3-none-any.whl \
+    --hash=sha256:75a5d21807438b47c4a468944d834f64f479b070a5d9b04832b9b6123596ba6e
 priority==2.0.0 \
     --hash=sha256:6f8eefce5f3ad59baf2c080a664037bb4725cd0a790d53d59ab4059288faf6aa \
     --hash=sha256:c965d54f1b8d0d0b19479db3924c7c36cf672dbf2aec92d43fbdaf4492ba18c0
@@ -1702,15 +1715,3 @@ yarl==1.25.1 \
     --hash=sha256:f53dcd26694f148f738edc052b5a69234833e739f10f4c3287bdfd8ec0f7b326 \
     --hash=sha256:f61964f235a43738bfac50da46fc4254943a7eea3051aeb0b6fc7c992c29fadc \
     --hash=sha256:fe01645169a2112aa1d4ebc3e4c5f029c5c8f97adfc32e5d37c993b39a994d75
-
-portfolio-agent-observability @ https://github.com/ai-platform-portfolio/application-library/releases/download/observability-v0.1.0/portfolio_agent_observability-0.1.0-py3-none-any.whl \
-    --hash=sha256:56deb0686191ef756c815539a5d963309d13cf4a22200a9ac6eb17ef5a3755fe
-
-portfolio-agent-runtime @ https://github.com/ai-platform-portfolio/application-library/releases/download/agent-runtime-v0.1.6/portfolio_agent_runtime-0.1.6-py3-none-any.whl \
-    --hash=sha256:f899a7606195038cafb31223361f960b61b0f0c00aad33a0c273ad53fe9a3dd7
-
-azure-ai-projects==2.11.0 \
-    --hash=sha256:add3f4cc37724abbc3bae4fe2bcfa2b11bd70fc19bc1f1fc68c453532b05c393
-
-azure-storage-blob==12.31.1 \
-    --hash=sha256:9e012d5f4ab658b7cb8a4581329d7a7aa2bf5f39b4d63baeefaae7f9e90fe6f0
