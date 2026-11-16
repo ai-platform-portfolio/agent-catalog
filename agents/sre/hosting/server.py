@@ -113,9 +113,12 @@ def build_app(client=None, config=None, **host_options):
     config = config or load_config()
     policy = yaml.safe_load((Path(__file__).resolve().parents[1] / 'config/coding.yaml').read_text())
     credential = None
+    coding_client = client
+    embedding_client = None
     if client is None:
         credential = DefaultAzureCredential()
         client = model_client(credential)
+        coding_client = model_client(credential, capability="coding")
     backend = os.getenv('DIAGNOSTICS_BACKEND', 'provided')
     live = project = None
     context_settings = {}
@@ -130,10 +133,12 @@ def build_app(client=None, config=None, **host_options):
     if config.get('memory', {}).get('enabled'):
         from azure.ai.projects import AIProjectClient
         credential = credential or DefaultAzureCredential()
+        embedding_client = model_client(credential, capability="embedding")
         context_settings = dict(agent=os.environ['FOUNDRY_AGENT_NAME'],
                                 memory_store=os.environ['MEMORY_STORE_NAME'],
                                 retention_days=config['memory']['retention_days'],
                                 knowledge=json.loads(os.environ['KNOWLEDGE_MANIFEST_JSON']))
+        context_settings.update(embedding_client=embedding_client, knowledge_path=config['knowledge']['path'])
         project = AIProjectClient(endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'], credential=credential,
                                   connection_timeout=5, read_timeout=15, retry_total=0)
 
@@ -168,13 +173,19 @@ def build_app(client=None, config=None, **host_options):
                     result = await investigate_event(payload, investigation, agent=os.environ['FOUNDRY_AGENT_NAME'],
                                                      namespace=live[2], workload=live[3])
                 elif operation == 'propose':
-                    proposal = await asyncio.to_thread(propose_request, payload, policy, client,
-                                                       os.getenv('MODEL_DEPLOYMENT_NAME', config['model']))
+                    proposal = await asyncio.to_thread(propose_request, payload, policy, coding_client,
+                                                       os.getenv('CODING_MODEL_DEPLOYMENT_NAME', config['model']))
                     result = {'proposal': proposal, 'deployment': {
                         'agent': os.getenv('FOUNDRY_AGENT_NAME'), 'version': os.getenv('FOUNDRY_AGENT_VERSION'),
                         'source_revision': os.getenv('SOURCE_REVISION'), 'image': os.getenv('RELEASE_IMAGE')}}
                 else:
                     result = await investigation(payload)
+                result['model_connection'] = {
+                    'mode': os.getenv('MODEL_CONNECTION_MODE', 'foundry'),
+                    'models': {capability: os.getenv(prefix + 'MODEL_DEPLOYMENT_NAME')
+                               for capability, prefix in [('default', ''), ('coding', 'CODING_'), ('embedding', 'EMBEDDING_')]},
+                    'embedding_version': os.getenv('EMBEDDING_MODEL_VERSION'),
+                }
                 return JSONResponse(result)
             except InvalidRequest:
                 return JSONResponse({'error': 'Invalid request'}, status_code=400)
@@ -192,6 +203,10 @@ def build_app(client=None, config=None, **host_options):
     @app.shutdown_handler
     async def shutdown():
         client.close()
+        if coding_client is not client:
+            coding_client.close()
+        if embedding_client is not None:
+            embedding_client.close()
         if project is not None:
             project.close()
         if live:

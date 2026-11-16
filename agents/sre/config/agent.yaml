@@ -1,5 +1,8 @@
 # Replace this behaviour and tools/diagnostics.py for another case study; runtime/agent.py stays unchanged.
-model: chat
+gatewayAccess:
+  policy: bounded-agent
+
+model: reasoning
 reasoning_effort: medium
 
 limits:
@@ -52,7 +55,6 @@ response_schema:
 
 memory:
   enabled: true
-  chat_model: chat
   retention_days: 30
 
 knowledge:
