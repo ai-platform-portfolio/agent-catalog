@@ -46,7 +46,19 @@ def candidate_request(service, environment, version, payload):
         headers, separator, body = response.stdout.partition('\n\n')
         if response.returncode or not separator or not re.match(r'^HTTP/\S+ 2[0-9]{2}\b', headers):
             raise RuntimeError('Version-pinned hosted invocation failed')
-        return json.loads(body)
+        # azd 1.37.3 appends its extension-update notice even in raw mode.
+        # Accept that exact CLI suffix, never arbitrary text or another JSON value.
+        body = body.lstrip()
+        result, end = json.JSONDecoder().raw_decode(body)
+        notice = body[end:].strip()
+        if notice and not re.fullmatch(
+                r"WARNING: A new version of extension 'Foundry agents' is available: \S+ -> \S+\n"
+                r"  • To update: azd extension update azure\.ai\.agents\n"
+                r"  • To update all: azd extension update --all", notice):
+            raise RuntimeError('Unexpected output after hosted response')
+        if not isinstance(result, dict):
+            raise ValueError('Hosted response must be a JSON object')
+        return result
 
 
 def main():

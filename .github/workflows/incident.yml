@@ -70,7 +70,7 @@ jobs:
 
       - name: Investigate in Foundry
         id: investigation
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@52c206abbccce14939c12bb7b556cdecc284df15
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@9a3d7be65f6daa6da7652e8611bae3968b6a0e43
         with:
           service: ${{ steps.request.outputs.agent }}
           environment: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
@@ -130,7 +130,7 @@ jobs:
       - name: Propose in Foundry without GitHub write credentials
         id: proposal
         if: steps.evidence.outputs.actionable == 'true'
-        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@52c206abbccce14939c12bb7b556cdecc284df15
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@9a3d7be65f6daa6da7652e8611bae3968b6a0e43
         with:
           service: ${{ steps.request.outputs.agent }}
           environment: ${{ github.event.repository.name }}-${{ steps.request.outputs.agent }}
