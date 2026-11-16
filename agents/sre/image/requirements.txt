@@ -1706,8 +1706,8 @@ yarl==1.25.1 \
 portfolio-agent-observability @ https://github.com/ai-platform-portfolio/application-library/releases/download/observability-v0.1.0/portfolio_agent_observability-0.1.0-py3-none-any.whl \
     --hash=sha256:56deb0686191ef756c815539a5d963309d13cf4a22200a9ac6eb17ef5a3755fe
 
-portfolio-agent-runtime @ https://github.com/ai-platform-portfolio/application-library/releases/download/agent-runtime-v0.1.5/portfolio_agent_runtime-0.1.5-py3-none-any.whl \
-    --hash=sha256:79f30fda33c0e8af362f06aa5bf06c69c74fd50794db339809f3746fdbc29fed
+portfolio-agent-runtime @ https://github.com/ai-platform-portfolio/application-library/releases/download/agent-runtime-v0.1.6/portfolio_agent_runtime-0.1.6-py3-none-any.whl \
+    --hash=sha256:f899a7606195038cafb31223361f960b61b0f0c00aad33a0c273ad53fe9a3dd7
 
 azure-ai-projects==2.11.0 \
     --hash=sha256:add3f4cc37724abbc3bae4fe2bcfa2b11bd70fc19bc1f1fc68c453532b05c393

@@ -52,6 +52,7 @@ response_schema:
 
 memory:
   enabled: true
+  chat_model: chat
   retention_days: 30
 
 knowledge:

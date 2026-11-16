@@ -54,6 +54,17 @@ class Model:
 
 
 class AgentTests(unittest.TestCase):
+    def test_native_model_wiring_preserves_foundry_context_and_declares_memory_model(self):
+        import yaml
+        declaration = yaml.safe_load((ROOT / 'azure.yaml').read_text())
+        self.assertEqual(declaration['services']['foundry']['endpoint'], '${FOUNDRY_PROJECT_ENDPOINT}')
+        env = declaration['services']['sre']['env']
+        for name in ('MODEL_CONNECTION_MODE', 'MODEL_AUTH_METHOD', 'MODEL_DEPLOYMENT_NAME',
+                     'MODEL_BASE_URL', 'MODEL_TOKEN_SCOPE', 'MODEL_API_KEY'):
+            self.assertEqual(env[name], '${' + name + '}')
+        self.assertNotIn('FOUNDRY_PROJECT_ENDPOINT', env)
+        self.assertEqual(load_config()['memory']['chat_model'], 'chat')
+
     def test_complete_fault_investigation_uses_one_loop_and_withholds_grader(self):
         case, payload = load_case(ROOT / 'evaluation/cases/readiness-fault.yaml')
         model = Model(['workload_state', 'recent_events', 'bounded_logs'], 'actionable')
