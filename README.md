@@ -405,7 +405,7 @@ flowchart LR
 | Scalar native invocation and scoped App token actions | `ops-shared` |
 | Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
 
-The released `portfolio-agent-runtime` 0.1.0 wheel is pinned by its actual release
+The released `portfolio-agent-runtime` 0.1.6 wheel is pinned by its actual release
 URL and SHA256 in `image/requirements.txt`. Its bytes match the attached checksums,
 GitHub asset digest and merged library sources. Memory, the native predeploy hook
 and runtime environment fields are enabled in source. Image-build evidence and
