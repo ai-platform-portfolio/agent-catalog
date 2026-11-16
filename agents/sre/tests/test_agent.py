@@ -73,7 +73,7 @@ class AgentTests(unittest.TestCase):
                      'EMBEDDING_MODEL_VERSION', 'LEGACY_MEMORY_UNTIL'):
             self.assertEqual(env[name], '${' + name + '}')
         self.assertNotIn('FOUNDRY_PROJECT_ENDPOINT', env)
-        self.assertEqual(load_config()['gatewayAccess'], {'policy': 'bounded-agent'})
+        self.assertEqual(load_config()['gatewayAccess'], {'policy': 'bounded-reasoning-coding'})
         self.assertNotIn('MODEL_API_KEY', env)
 
     def test_complete_fault_investigation_uses_one_loop_and_withholds_grader(self):
