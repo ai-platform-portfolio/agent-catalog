@@ -1,6 +1,6 @@
 # Replace this behaviour and tools/diagnostics.py for another case study; runtime/agent.py stays unchanged.
 gatewayAccess:
-  policy: bounded-agent
+  policy: bounded-reasoning-coding
 
 model: reasoning
 reasoning_effort: medium
