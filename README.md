@@ -198,6 +198,40 @@ live-tool evaluation can be claimed. A live backend rejects caller-provided evid
 
 ## Build and delivery
 
+### Model connection intent
+
+Direct Foundry remains selected by the existing deployment workflow:
+
+```yaml
+MODEL_CONNECTION_MODE: foundry
+MODEL_AUTH_METHOD: entra
+MODEL_DEPLOYMENT_NAME: chat
+```
+
+Optional repository variables with those names override the intent. Existing
+`MODEL_BASE_URL` and `MODEL_TOKEN_SCOPE` overrides remain available. The native
+predeploy hook forwards validated configuration to the hosted container; model
+selection is no longer hardcoded in `azure.yaml`. `memory.chat_model: chat` remains
+independent of inference selection. Foundry hosting, state and retrieval retain
+their project connection.
+
+Future `gateway` mode requires an explicit HTTPS `MODEL_BASE_URL`, model and
+authentication method. `api_key` uses the optional repository secret `MODEL_API_KEY`;
+`entra` requires the gateway's explicit `MODEL_TOKEN_SCOPE`. Missing settings or
+upstream failures do not fall back to Foundry. No gateway key, provider route or
+network change is created here. Key issuance, rotation/revocation and secure hosted
+delivery need their own approved integration; gateway mode remains unselected.
+
+`make foundry-up`, `make aks-up` and `make up` in GitOps invoke this existing
+`deploy-agents.yml` workflow after foundation settings are refreshed. The workflow
+filename is the reusable discovery convention: another repository can expose the
+same native caller without adding a registration to GitOps. Make waits for the
+exact deployment/acceptance run and propagates failure. Builds reuse the existing
+cache, digest handoff and security scan. Existing serving routes remain protected;
+this does not automatically promote a candidate or complete human rubric review.
+
+### Image and native deployment
+
 ```sh
 docker build --platform linux/amd64 -f agents/sre/image/Dockerfile \
   -t foundry-agent-review agents/sre

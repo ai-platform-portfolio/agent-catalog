@@ -209,8 +209,12 @@ jobs:
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           # Optional case-study inputs stay at repository level, never org-wide.
+          MODEL_CONNECTION_MODE: ${{ vars.MODEL_CONNECTION_MODE || 'foundry' }}
+          MODEL_AUTH_METHOD: ${{ vars.MODEL_AUTH_METHOD || 'entra' }}
+          MODEL_DEPLOYMENT_NAME: ${{ vars.MODEL_DEPLOYMENT_NAME || 'chat' }}
           MODEL_BASE_URL: ${{ vars.MODEL_BASE_URL }}
           MODEL_TOKEN_SCOPE: ${{ vars.MODEL_TOKEN_SCOPE }}
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
           AGENT_DIAGNOSTICS_BACKEND: ${{ vars.AGENT_DIAGNOSTICS_BACKEND || 'provided' }}
