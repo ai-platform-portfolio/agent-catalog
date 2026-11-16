@@ -236,3 +236,22 @@ class ReleaseTests(unittest.TestCase):
         response.returncode, response.stdout = 1, 'HTTP/2.0 403 Forbidden\n\nprivate-diagnostics'
         with patch('evaluation.run.subprocess.run', return_value=response), self.assertRaisesRegex(RuntimeError, '^Version-pinned hosted invocation failed$'):
             candidate_request('sre', 'agent-catalog-sre', '7', {'incident': {}})
+
+    def test_native_update_notice_does_not_become_part_of_the_agent_json(self):
+        # Exact azd 1.37.3 suffix reproduced with agents 1.0.0 when 1.1.0 is available.
+        notice = ("WARNING: A new version of extension 'Foundry agents' is available: 1.0.0 -> 1.1.0\n"
+                  '  • To update: azd extension update azure.ai.agents\n'
+                  '  • To update all: azd extension update --all\n\n')
+        result = {'answer': 'Réponse containing WARNING: without truncating the JSON'}
+        body = json.dumps(result, ensure_ascii=False)
+        for suffix in ('', notice):
+            response = subprocess.CompletedProcess([], 0, 'HTTP/2.0 200 OK\n\n' + body + suffix, '')
+            with self.subTest(suffix=bool(suffix)), patch('evaluation.run.subprocess.run', return_value=response):
+                self.assertEqual(candidate_request('sre', 'agent-catalog-sre', '1', {}), result)
+        for body in ('{"ok":true} unexpected-private-output', '{"ok":true}{"other":true}',
+                     '{"truncated":', '[]', '{"ok":true}' + notice.replace('azure.ai.agents', 'other')):
+            response = subprocess.CompletedProcess([], 0, 'HTTP/2.0 200 OK\n\n' + body, '')
+            with self.subTest(body=body[:20]), patch('evaluation.run.subprocess.run', return_value=response):
+                with self.assertRaises((RuntimeError, ValueError)) as error:
+                    candidate_request('sre', 'agent-catalog-sre', '1', {})
+                self.assertNotIn('unexpected-private-output', str(error.exception))
