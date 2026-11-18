@@ -47,7 +47,7 @@ on:
         type: string
 
 env:
-  APPLICATION_CHART_REVISION: e8053eba011a9fe28fec997d723b20670795bac8 # native hosted gateway credentials
+  APPLICATION_CHART_REVISION: 01f28760ba4bb012e2288cafebe3cf2ecac2c86a # native hosted gateway credentials
 
 permissions:
   contents: read
