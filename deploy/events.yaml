@@ -1,6 +1,9 @@
 # Consumer-specific subscription to the platform's existing Argo Events bus.
 # Bootstrap supplies the resource watch namespace and existing GitHub App metadata.
 # Agent execution is deployed independently by azure.yaml; no GitOps edit is needed.
+name: agent-catalog-sre
+namespace: agent-catalog-sre
+
 events:
   githubTokens:
     dispatch:
@@ -64,19 +67,6 @@ events:
           rateLimit: {unit: Minute, requestsPerUnit: 2}
 
 platform:
-  credentials:
-    # Native chart inputs. Delivery supplies the selected namespace and real instance principal.
-    roles:
-      reader:
-        rules:
-          - {apiGroups: [''], resources: [pods, events], verbs: [get, list]}
-          - {apiGroups: [''], resources: [pods/log], verbs: [get]}
-          - {apiGroups: [apps], resources: [deployments], verbs: [get]}
-          - {apiGroups: [argoproj.io], resources: [rollouts], verbs: [get]}
-    roleBindings:
-      reader:
-        roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role}
-        subjects: [{kind: User, apiGroup: rbac.authorization.k8s.io, name: ''}]
   lifecycle:
     cleanup:
       enabled: true

@@ -22,7 +22,7 @@ def remote(script, file=None):
         args += ['--file', str(file)]
     result = json.loads(command(*args))
     if result['exitCode'] != 0:
-        raise RuntimeError('Native subscription reconciliation failed; inspect its Argo Application')
+        raise RuntimeError('Native reader reconciliation failed; inspect its Argo Application')
     return result.get('logs') or ''
 
 
@@ -57,51 +57,40 @@ def prepare(intent, temporary):
     (temporary / 'target.json').write_text(json.dumps(target))
 
 
-def registration_values(intent, target, release, defaults, activate):
+def registration_values(intent, target, release):
+    if release['agent'] != os.environ['SERVICE'] or release['source_revision'] != os.environ['GITHUB_SHA']:
+        raise ValueError('Reader must match the current release')
     principal = str(UUID(release['instance_principal_id']))
-    if release['agent'] != os.environ['SERVICE']:
-        raise ValueError('Subscription reader must be the deployed agent instance')
-    values = yaml.safe_load(Path(intent['subscription']).read_text())
-    values.update(name=intent['name'], namespace=intent['namespace'])
-    events = values['events']
-    if not activate:
-        events['sensors'] = {}  # Readers/watch first; dispatch only after reviewed routing.
-    events['sources']['readiness']['resource']['readiness']['namespace'] = target['namespace']
-    for sensor in events['sensors'].values():
-        for dependency in sensor['dependencies']:
-            for entry in dependency['filters']['data']:
-                if entry['path'] == 'body.involvedObject.name':
-                    entry['value'] = ['^' + re.escape(target['workload']) + '-']
-        sensor['triggers'][0]['template']['http']['payload'][3]['src']['value'] = target['workload']
+    values = intent
     platform = values['platform']
-    platform['events'] = defaults
-    role_name = intent['name'] + '-reader'
-    for resource in (platform['credentials']['roles']['reader'], platform['credentials']['roleBindings']['reader']):
-        resource['metadata'] = {'name': role_name, 'namespace': target['namespace']}
-    binding = platform['credentials']['roleBindings']['reader']
-    binding['roleRef']['name'] = role_name
-    binding['subjects'][0]['name'] = principal
+    credentials = platform['credentials']
+    for resource in (credentials['roles']['reader'], credentials['roleBindings']['reader']):
+        resource['metadata'] = {'name': intent['name'] + '-reader', 'namespace': target['namespace']}
+    credentials['roleBindings']['reader']['subjects'] = [
+        {'kind': 'User', 'apiGroup': 'rbac.authorization.k8s.io', 'name': principal}]
     platform['argocd'] = dict(enabled=True, repository='https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '.git',
                               revision=os.environ['GITHUB_SHA'], chartRevision=os.environ['APPLICATION_CHART_REVISION'],
                               valuesPath=os.environ['DIAGNOSTICS_INTENT'])
     return values
 
 
-def register(intent, temporary, activate):
+def register(intent, temporary):
     release = json.loads(Path(os.environ['RELEASE_RECORD']).read_text())
-    target = json.loads(Path(os.environ.get('TARGET_RECORD', str(temporary / 'target.json'))).read_text())
-    defaults = json.loads(json.loads(remote('kubectl get configmap event-consumer-defaults -n cluster-onboarding -o json'))['data']['values.json'])
-    values = registration_values(intent, target, release, defaults, activate)
-    source = temporary / 'subscription-values.json'
+    target = json.loads((temporary / 'target.json').read_text())
+    values = registration_values(intent, target, release)
+    source = temporary / 'reader-values.json'
     source.write_text(json.dumps(values))
     name = intent['name']
     if not re.fullmatch(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?', name):
         raise ValueError('Invalid registration identity')
-    manifest = temporary / 'subscription.yaml'
-    manifest.write_text(command('helm', 'template', name, '.application-chart', '-f', str(source),
+    manifest = temporary / 'reader.yaml'
+    app = yaml.safe_load(command('helm', 'template', name, '.application-chart', '-f', str(source),
                                 '--show-only', 'templates/argocd/application.yaml'))
+    # The existing chart only forwards credential overrides for event subscriptions.
+    app['spec']['sources'][0]['helm']['valuesObject']['platform']['credentials'] = values['platform']['credentials']
+    manifest.write_text(json.dumps(app))
     revision = os.environ['GITHUB_SHA']
-    remote(f'''kubectl apply -f subscription.yaml &&
+    remote(f'''kubectl apply -f reader.yaml &&
 kubectl patch applications.argoproj.io/{name} -n argocd --type=merge -p '{{"operation":{{"sync":{{"prune":true}}}}}}' &&
 kubectl wait -n argocd applications.argoproj.io/{name} --for=jsonpath='{{.status.operationState.syncResult.revisions[1]}}'={revision} --timeout=300s &&
 kubectl wait -n argocd applications.argoproj.io/{name} --for=jsonpath='{{.status.operationState.phase}}'=Succeeded --timeout=300s''', manifest)
@@ -114,6 +103,6 @@ if __name__ == '__main__':
         if sys.argv[1] == 'prepare':
             prepare(intent, temporary)
         else:
-            register(intent, temporary, sys.argv[1] == 'activate')
+            register(intent, temporary)
     except Exception:
         sys.exit('Live diagnostics configuration failed; no raw cloud response logged')

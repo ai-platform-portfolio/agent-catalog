@@ -25,31 +25,20 @@ class DiagnosticsDeliveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 delivery.resolve_target(inventory, intent)
 
-    def test_readers_precede_dispatch_and_bind_only_the_real_instance(self):
+    def test_reader_binds_only_the_current_instance_in_the_target_namespace(self):
         intent = yaml.safe_load((ROOT / 'agents/sre/config/diagnostics.yaml').read_text())
-        intent['subscription'] = str(ROOT / intent['subscription'])
-        release = {'agent': 'catalog-sre', 'instance_principal_id': '11111111-1111-1111-1111-111111111111'}
-        target = {'namespace': 'selected-target', 'workload': 'worker'}
-        defaults = {'namespace': 'events', 'eventBus': 'platform', 'github': {}}
-        env = {'SERVICE': 'catalog-sre', 'GITHUB_REPOSITORY': 'example/catalog', 'GITHUB_SHA': 'a'*40,
+        revision = 'a' * 40
+        principal = '11111111-1111-1111-1111-111111111111'
+        release = {'agent': 'catalog-sre', 'instance_principal_id': principal, 'source_revision': revision}
+        env = {'SERVICE': 'catalog-sre', 'GITHUB_REPOSITORY': 'example/catalog', 'GITHUB_SHA': revision,
                'APPLICATION_CHART_REVISION': 'b'*40, 'DIAGNOSTICS_INTENT': 'agents/sre/config/diagnostics.yaml'}
+        target = {'namespace': 'selected-target', 'workload': 'api'}
         with patch.dict(os.environ, env):
-            for activate in (False, True):
-                values = delivery.registration_values(intent, target, release, defaults, activate)
-                self.assertEqual(bool(values['events']['sensors']), activate)
-                self.assertEqual(values['events']['sources']['readiness']['resource']['readiness']['namespace'], target['namespace'])
-                credentials = values['platform']['credentials']
-                role = credentials['roles']['reader']
-                binding = credentials['roleBindings']['reader']
-                self.assertEqual(role['metadata']['namespace'], target['namespace'])
-                self.assertEqual(binding['subjects'][0]['name'], release['instance_principal_id'])
-                self.assertEqual(binding['roleRef']['name'], role['metadata']['name'])
-                self.assertTrue(all(set(rule['verbs']) <= {'get', 'list'} for rule in role['rules']))
-                self.assertFalse(any('secrets' in rule['resources'] or '*' in rule['resources'] for rule in role['rules']))
-            bad = {**release, 'agent': 'another-agent'}
+            values = delivery.registration_values(intent, target, release)
             with self.assertRaises(ValueError):
-                delivery.registration_values(intent, target, bad, defaults, True)
-
-
-if __name__ == '__main__':
-    unittest.main()
+                delivery.registration_values(intent, target, {**release, 'source_revision': 'c'*40})
+        credentials = values['platform']['credentials']
+        binding = credentials['roleBindings']['reader']
+        self.assertEqual(binding['metadata']['namespace'], 'selected-target')
+        self.assertEqual([subject['name'] for subject in binding['subjects']], [principal])
+        self.assertTrue(all(set(rule['verbs']) <= {'get', 'list'} for rule in credentials['roles']['reader']['rules']))

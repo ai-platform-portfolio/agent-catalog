@@ -430,33 +430,12 @@ Publication credentials are minted only after validation succeeds. Trusted host
 steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
 overwrite another proposal or reopen a closed incident PR.
 
-The SRE declares its live target in `agents/sre/config/diagnostics.yaml`: repository,
-PR and workload. Delivery resolves the registered preview's actual namespace and
-current AKS API/CA. It supplies the existing runtime environment contract without
-hand-maintained namespace hashes or public-CA repository variables. A missing or
-ambiguous target fails deployment rather than falling back to supplied evidence.
-
-`deploy/events.yaml` retains native source/filter/dispatch policy and read-only
-Role/RoleBinding inputs. The caller in `.github/scripts/diagnostics.py` combines
-that intent with the actual deployed instance principal and public platform event
-defaults, then renders only the shared chart's Argo registration template. Child
-reconciliation owns the resources and cannot register itself. GitOps contains no
-catalog registration, target list or SRE-specific permissions.
-
-Candidate delivery installs the reader and source without a dispatch Sensor.
-The existing evaluator runs recorded cases and a separate exact-version `--live`
-workload check, retaining `live.json` and the resolved `target.json`. Promotion
-rejects missing, recorded-only or mismatched live evidence. The existing reviewed
-promotion/rollback job activates dispatch for its accepted target only after
-routing succeeds. A normal candidate deployment does not activate incident work.
-No network exception, new Azure role or credential is introduced by this wiring;
-API reachability and the actual role mapping must pass live acceptance.
-
-The current coding policy requires `tests/test_readiness_contract.py` in the
-application repository. The coordinated application baseline supplies that test;
-merge it before accepting an incident-to-draft run. Native validation remains
-isolated and credential-free, and generated fixes remain drafts for human review.
-These source changes do not establish that live recovery or activation has run.
+SRE live monitoring selects the repository, PR and workload in
+`agents/sre/config/diagnostics.yaml`. Delivery resolves the registered namespace
+and AKS API trust, and reconciles the chart's read-only Role and RoleBinding for
+the deployed Foundry instance. Acceptance requires an exact-version live read
+from that target alongside the existing recorded cases. The release checks
+bind the live report to the target, version, source and image.
 
 `evaluation/context.py` checks new-session recall, checkpoint resume and deletion
 using synthetic records, and cleans up only its own records. Its checkpoint
