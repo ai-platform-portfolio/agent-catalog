@@ -47,7 +47,7 @@ on:
         type: string
 
 env:
-  APPLICATION_CHART_REVISION: ec3b570efd0b78014ad4a3a16a9f2f4180a02660 # scoped credentials with accounting recovery diagnostics
+  APPLICATION_CHART_REVISION: bbc8ad6eae460f0a77d26e918b34c9b56ff0f096 # scoped credentials with accounting recovery diagnostics
 
 permissions:
   contents: read
@@ -208,7 +208,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Resolve chart-owned public model connections
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@e993f898010b0eec1481c88450b29bcbea2724b0
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7
         with:
           operation: configure
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -248,7 +248,7 @@ jobs:
           KUBE_ALLOWED_WORKLOAD: ${{ vars.KUBE_ALLOWED_WORKLOAD }}
 
       - name: Reconcile credentials for the actual native principal
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@e993f898010b0eec1481c88450b29bcbea2724b0
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7
         with:
           operation: apply
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
