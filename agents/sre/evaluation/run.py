@@ -71,12 +71,23 @@ def main():
     parser.add_argument('--service', help='Use native azd version-pinned invocation instead of an endpoint URL')
     parser.add_argument('--environment', help='Existing azd environment for --service')
     parser.add_argument('--release-record', type=Path, help='Require the returned deployment to match this image/source record')
+    parser.add_argument('--target-record', type=Path, help='Resolved namespace/workload for live acceptance')
     args = parser.parse_args()
     if (args.live and args.mode != 'hosted'
             or args.mode == 'hosted' and bool(args.endpoint) == bool(args.service)
             or args.service and (not args.environment or not args.expected_version)):
         parser.error('Hosted mode needs exactly one of --endpoint or --service; --service needs environment/version')
     case, payload = load_case(args.case)
+    target = None
+    if args.target_record:
+        target = json.loads(args.target_record.read_text())
+        if (not args.live or set(target) != {'namespace', 'workload'}
+                or any(not re.fullmatch(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?', v) for v in target.values())):
+            raise ValueError('A live target needs an explicit namespace and workload')
+        payload['incident'].update(target)
+        payload['incident']['summary'] = (
+            'Check the configured target\'s current Kubernetes readiness using workload_state. '
+            'Separate observed workload health from application availability; do not claim a fix or recovery.')
     config = load_config()
     configure()
     try:
@@ -97,6 +108,8 @@ def main():
             report = score(case, result, config)
             report['evaluation_trace_id'] = f'{span.get_span_context().trace_id:032x}'
             report['mode'] = args.mode + ('_live' if args.live else '_recorded')
+            if target:
+                report['target'] = target
             print(json.dumps(report, indent=2))
             return 1 if report['status'] == 'failed' else 0
     finally:

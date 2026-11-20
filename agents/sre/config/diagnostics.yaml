@@ -1,0 +1,23 @@
+# Operator intent. Resolve the namespace from the registered preview, not a copied hash.
+name: agent-catalog-sre
+namespace: agent-catalog-sre
+target:
+  repository: ai-platform-portfolio/preview-environments
+  pullRequest: 12
+  workload: api
+
+platform:
+  credentials:
+    roles:
+      reader:
+        rules:
+          - {apiGroups: [''], resources: [pods, events], verbs: [get, list]}
+          - {apiGroups: [''], resources: [pods/log], verbs: [get]}
+          - {apiGroups: [apps], resources: [deployments], verbs: [get]}
+          - {apiGroups: [argoproj.io], resources: [rollouts], verbs: [get]}
+    roleBindings:
+      reader:
+        roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: agent-catalog-sre-reader}
+        subjects: []
+  lifecycle:
+    cleanup: {enabled: true}

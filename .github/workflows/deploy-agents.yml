@@ -5,10 +5,10 @@ name: Deploy catalog agents
 
 on:
   pull_request:
-    paths: ['agents/**', '.github/workflows/**']
+    paths: ['agents/**', '.github/scripts/**', '.github/workflows/**']
   push:
     branches: [main]
-    paths: ['agents/**', '.github/workflows/**']
+    paths: ['agents/**', '.github/scripts/**', '.github/workflows/**']
   workflow_dispatch:
     inputs:
       operation:
@@ -66,6 +66,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Check caller delivery isolation
+        run: |
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
       - name: Discover native agent projects
         id: agents
@@ -133,6 +138,12 @@ jobs:
       && (inputs.operation == '' || inputs.operation == 'deploy')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+
+    env:
+      DIAGNOSTICS_INTENT: agents/${{ matrix.agent }}/config/diagnostics.yaml
+      RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+      CLUSTER: ${{ vars.AKS_NAME }}
+      SERVICE: ${{ github.event.repository.name }}-${{ matrix.agent }}
 
     permissions:
       contents: read
@@ -218,6 +229,10 @@ jobs:
           resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
           cluster: ${{ vars.AKS_NAME }}
 
+      - name: Resolve the declared live target and AKS trust
+        if: hashFiles(env.DIAGNOSTICS_INTENT) != ''
+        run: python3 .github/scripts/diagnostics.py prepare
+
       - name: Deploy prebuilt digest with native azd
         id: candidate
         uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@38a239a1068f766437a043c8a0d3fac337e71601
@@ -241,11 +256,12 @@ jobs:
           LEGACY_MEMORY_UNTIL: ${{ vars.LEGACY_MEMORY_UNTIL }}
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
-          AGENT_DIAGNOSTICS_BACKEND: ${{ vars.AGENT_DIAGNOSTICS_BACKEND || 'provided' }}
-          KUBE_API_URL: ${{ vars.KUBE_API_URL }}
-          KUBE_CA_PEM: ${{ vars.KUBE_CA_PEM }}
-          KUBE_ALLOWED_NAMESPACE: ${{ vars.KUBE_ALLOWED_NAMESPACE }}
-          KUBE_ALLOWED_WORKLOAD: ${{ vars.KUBE_ALLOWED_WORKLOAD }}
+
+      - name: Reconcile read-only collectors before candidate acceptance
+        if: hashFiles(env.DIAGNOSTICS_INTENT) != ''
+        env:
+          RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
+        run: python3 .github/scripts/diagnostics.py readers
 
       - name: Reconcile credentials for the actual native principal
         uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7
@@ -266,17 +282,24 @@ jobs:
           AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
           CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
           RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
-          KUBE_ALLOWED_NAMESPACE: ${{ vars.KUBE_ALLOWED_NAMESPACE }}
-          KUBE_ALLOWED_WORKLOAD: ${{ vars.KUBE_ALLOWED_WORKLOAD }}
         run: |
           mkdir -p "$RUNNER_TEMP/acceptance"
           cp "$RELEASE_RECORD" "$RUNNER_TEMP/acceptance/release.json"
+          if [[ -f "$RUNNER_TEMP/target.json" ]]; then
+            cp "$RUNNER_TEMP/target.json" "$RUNNER_TEMP/acceptance/target.json"
+          fi
           cp "$RUNNER_TEMP/gateway-$AZURE_ENV_NAME/connection.json" "$RUNNER_TEMP/acceptance/gateway.json"
           for case in evaluation/cases/*.yaml; do
             "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.run "$case" --mode hosted \
               --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
               --release-record "$RELEASE_RECORD" > "$RUNNER_TEMP/acceptance/$(basename "$case" .yaml).json"
           done
+          if [[ -f "$RUNNER_TEMP/acceptance/target.json" ]]; then
+            "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.run evaluation/cases/healthy.yaml \
+              --mode hosted --live --target-record "$RUNNER_TEMP/acceptance/target.json" \
+              --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
+              --release-record "$RELEASE_RECORD" > "$RUNNER_TEMP/acceptance/live.json"
+          fi
           if "$RUNNER_TEMP/evaluation-venv/bin/python" -c 'from runtime.agent import load_config; raise SystemExit(not load_config().get("memory", {}).get("enabled", False))'; then
             "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.context "$SERVICE" "$AZURE_ENV_NAME" "$CANDIDATE_VERSION" \
               --review "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \

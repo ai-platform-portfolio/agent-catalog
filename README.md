@@ -171,12 +171,13 @@ The default `DIAGNOSTICS_BACKEND: provided` accepts explicitly labelled,
 caller-provided evidence. With no evidence, no tools are advertised and the agent
 must abstain. It does not silently fall back to live access.
 
-To use live collectors, set these agent environment values in `azure.yaml`:
+Delivery derives these environment values from the declared diagnostics target and AKS metadata:
 
 ```yaml
 DIAGNOSTICS_BACKEND: kubernetes
 KUBE_API_URL: https://<approved-api-host>
 KUBE_ALLOWED_NAMESPACE: <approved-namespace>
+KUBE_ALLOWED_WORKLOAD: <approved-workload>
 # KUBE_CA_FILE: /app/<trusted-ca-file> # Only for a separately supplied private CA.
 ```
 
@@ -185,7 +186,7 @@ Rollouts, Pods, events and Pod logs in that namespace. It also needs network acc
 to the API. The implementation uses Azure Identity tokens for the AKS server
 application, TLS verification and fixed GET requests. The configured namespace
 bounds which incidents the live collectors accept.
-No such role, binding, network exception or CA delivery is created in this PR.
+The shared chart renders the target reader binding during candidate delivery. No network exception is configured.
 If packaging a trusted public CA, explicitly allow that file in `.dockerignore`;
 private keys and local environment files remain excluded.
 
@@ -429,33 +430,12 @@ Publication credentials are minted only after validation succeeds. Trusted host
 steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
 overwrite another proposal or reopen a closed incident PR.
 
-The optional subscription is configured in `deploy/events.yaml` using the
-application chart's generic native `events.sources` / `events.sensors` interface.
-Readiness filters, the GitHub destination and incident payload live here, not in
-shared templates. The chart uses one shared ServiceAccount for this subscription,
-wires its namespace-scoped watch permissions and delivers the selected expiring
-GitHub token. No catalog-specific change in GitOps is required.
-
-At bootstrap the operator selects
-`events.sources.readiness.resource.readiness.namespace` and supplies existing App
-metadata through `platform.events.github`. The emitted event supplies its namespace
-to the payload. The Pod filter and workload payload select `api`; change both when
-selecting another workload. Configure the actual Foundry **instance identity**'s
-read-only target Role/RoleBinding through the chart's existing
-`platform.credentials.roles` / `roleBindings` values, separately from event watch
-permissions. No Foundry reader identity or policy is hardcoded into the generic
-event templates. Render only `templates/argocd/application.yaml` initially; child
-reconciliation registers nothing. Event and operator credential inputs are passed
-through by that registration. No subscription was applied by this source change.
-
-AKS test inputs are optional **repository-level** configuration:
-`AGENT_DIAGNOSTICS_BACKEND=kubernetes`, `KUBE_API_URL`, public `KUBE_CA_PEM`,
-`KUBE_ALLOWED_NAMESPACE` and `KUBE_ALLOWED_WORKLOAD`. They introduce no AKS org
-variable dependency. The current public-only AKS API does not become reachable
-from Foundry merely because VNets are peered; no network settings have changed.
-Register the subscription only after the chosen target is reachable and its
-read-only RoleBinding is reconciled. Provided-evidence cases remain independent
-of an available AKS cluster.
+SRE live monitoring selects the repository, PR and workload in
+`agents/sre/config/diagnostics.yaml`. Delivery resolves the registered namespace
+and AKS API trust, and reconciles the chart's read-only Role and RoleBinding for
+the deployed Foundry instance. Acceptance requires an exact-version live read
+from that target alongside the existing recorded cases. The release checks
+bind the live report to the target, version, source and image.
 
 `evaluation/context.py` checks new-session recall, checkpoint resume and deletion
 using synthetic records, and cleans up only its own records. Its checkpoint
