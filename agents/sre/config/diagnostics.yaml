@@ -1,0 +1,8 @@
+# Operator intent. Resolve the namespace from the registered preview, not a copied hash.
+name: agent-catalog-sre
+namespace: agent-catalog-sre
+subscription: deploy/events.yaml
+target:
+  repository: ai-platform-portfolio/preview-environments
+  pullRequest: 12
+  workload: api

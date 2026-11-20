@@ -41,6 +41,19 @@ def validate_evidence(directory, agent, version):
         if (not result.get('trace_id') or any(result.get('deployment', {}).get(key) != release[key]
                                              for key in ('agent', 'version', 'image', 'source_revision'))):
             raise ValueError('Evaluation did not exercise this immutable release')
+    if Path('config/diagnostics.yaml').exists():
+        live = json.loads((directory / 'live.json').read_text())
+        target = json.loads((directory / 'target.json').read_text())
+        if (live.get('mode') != 'hosted_live' or live.get('target') != target
+                or set(target) != {'namespace', 'workload'}
+                or live.get('status') != 'human_review_required'
+                or set(live.get('checks', {})) != {'required_tools', 'forbidden_tools', 'known_tools', 'tool_budget', 'request_budget', 'no_forbidden_claims'}
+                or not all(v is True for v in live['checks'].values())
+                or live.get('result', {}).get('evidence_source') != 'live_kubernetes'
+                or 'workload_state' not in live.get('result', {}).get('tool_calls', [])
+                or any(live['result'].get('deployment', {}).get(k) != release[k]
+                       for k in ('agent', 'version', 'image', 'source_revision'))):
+            raise ValueError('Missing or mismatched current live collector acceptance')
     if yaml.safe_load(Path('config/agent.yaml').read_text()).get('memory', {}).get('enabled'):
         context = json.loads((directory / 'context.json').read_text())
         required = {'recall_in_new_session', 'checkpoint_in_new_session', 'forget_memory', 'forget_checkpoint', 'grounded_runbook_citation'}
