@@ -25,20 +25,26 @@ class DiagnosticsDeliveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 delivery.resolve_target(inventory, intent)
 
-    def test_reader_binds_only_the_current_instance_in_the_target_namespace(self):
-        intent = yaml.safe_load((ROOT / 'agents/sre/config/diagnostics.yaml').read_text())
+    def test_broker_is_read_only_and_sensor_requires_activation(self):
+        path = ROOT / 'agents/sre/config/diagnostics.yaml'
         revision = 'a' * 40
-        principal = '11111111-1111-1111-1111-111111111111'
-        release = {'agent': 'catalog-sre', 'instance_principal_id': principal, 'source_revision': revision}
+        release = {'agent': 'catalog-sre', 'version': '3', 'source_revision': revision, 'image': 'registry/image@sha256:' + 'c' * 64}
         env = {'SERVICE': 'catalog-sre', 'GITHUB_REPOSITORY': 'example/catalog', 'GITHUB_SHA': revision,
                'APPLICATION_CHART_REVISION': 'b'*40, 'DIAGNOSTICS_INTENT': 'agents/sre/config/diagnostics.yaml'}
         target = {'namespace': 'selected-target', 'workload': 'api'}
-        with patch.dict(os.environ, env):
-            values = delivery.registration_values(intent, target, release)
-            with self.assertRaises(ValueError):
-                delivery.registration_values(intent, target, {**release, 'source_revision': 'c'*40})
-        credentials = values['platform']['credentials']
-        binding = credentials['roleBindings']['reader']
-        self.assertEqual(binding['metadata']['namespace'], 'selected-target')
-        self.assertEqual([subject['name'] for subject in binding['subjects']], [principal])
-        self.assertTrue(all(set(rule['verbs']) <= {'get', 'list'} for rule in credentials['roles']['reader']['rules']))
+        azure = {'subscriptionId': 'fixture', 'tenantId': 'fixture', 'oidcIssuerUrl': 'https://oidc.example',
+                 'location': 'uksouth', 'identityResourceGroup': 'example'}
+        for activate in (False, True):
+            with patch.dict(os.environ, env):
+                values, job = delivery.registration_values(yaml.safe_load(path.read_text()), target, release,
+                    azure, '/example/project', 'https://foundry.example/api/projects/test', activate=activate)
+            self.assertEqual(bool(values['events']['sensors']), activate)
+            self.assertNotIn('githubTokens', values['events'])
+            credentials = values['platform']['credentials']
+            binding = credentials['roleBindings']['reader']
+            self.assertEqual(binding['metadata']['namespace'], 'selected-target')
+            self.assertEqual(binding['subjects'], [{'kind': 'ServiceAccount', 'name': 'sre-broker',
+                                                   'namespace': values['namespace']}])
+            self.assertTrue(all(set(rule['verbs']) <= {'get', 'list'} for rule in credentials['roles']['reader']['rules']))
+            self.assertEqual(values['platform']['azure']['roleAssignments']['invoke']['armScope'], '/example/project')
+            self.assertEqual(job['spec']['template']['spec']['containers'][0]['image'], release['image'])

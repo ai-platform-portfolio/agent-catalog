@@ -136,15 +136,14 @@ class ReleaseTests(unittest.TestCase):
             report['mode'] = 'hosted_recorded'
             (self.root / (path.stem + '.json')).write_text(json.dumps(report))
         self.target = {'namespace': 'selected-preview', 'workload': 'api'}
-        live = json.loads((self.root / 'healthy.json').read_text())
-        live.update(mode='hosted_live', target=self.target)
-        live['result']['evidence_source'] = 'live_kubernetes'
+        live = json.loads((self.root / 'healthy.json').read_text())['result']
+        live.update(evidence_source='caller_provided', target=self.target)
         (self.root / 'target.json').write_text(json.dumps(self.target))
         (self.root / 'live.json').write_text(json.dumps(live))
 
     def test_release_rejects_recorded_or_wrong_target_live_acceptance(self):
         original = json.loads((self.root / 'live.json').read_text())
-        for changes in ({'mode': 'hosted_recorded'}, {'target': {'namespace': 'other', 'workload': 'api'}}, {'checks': {}}):
+        for changes in ({'evidence_source': 'live_kubernetes'}, {'target': {'namespace': 'other', 'workload': 'api'}}, {'trace_id': ''}):
             (self.root / 'live.json').write_text(json.dumps({**original, **changes}))
             with self.assertRaisesRegex(ValueError, 'live collector'):
                 validate_evidence(self.root, self.release['agent'], '7')

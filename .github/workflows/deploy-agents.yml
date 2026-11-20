@@ -5,10 +5,10 @@ name: Deploy catalog agents
 
 on:
   pull_request:
-    paths: ['agents/**', '.github/scripts/**', '.github/workflows/**']
+    paths: ['agents/**', 'deploy/events.yaml', '.github/scripts/**', '.github/workflows/**']
   push:
     branches: [main]
-    paths: ['agents/**', '.github/scripts/**', '.github/workflows/**']
+    paths: ['agents/**', 'deploy/events.yaml', '.github/scripts/**', '.github/workflows/**']
   workflow_dispatch:
     inputs:
       operation:
@@ -229,7 +229,7 @@ jobs:
           resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
           cluster: ${{ vars.AKS_NAME }}
 
-      - name: Resolve the declared live target and AKS trust
+      - name: Resolve the declared live target
         if: hashFiles(env.DIAGNOSTICS_INTENT) != ''
         run: python3 .github/scripts/diagnostics.py prepare
 
@@ -256,12 +256,6 @@ jobs:
           LEGACY_MEMORY_UNTIL: ${{ vars.LEGACY_MEMORY_UNTIL }}
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
-
-      - name: Reconcile read-only collectors before candidate acceptance
-        if: hashFiles(env.DIAGNOSTICS_INTENT) != ''
-        env:
-          RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
-        run: python3 .github/scripts/diagnostics.py readers
 
       - name: Reconcile credentials for the actual native principal
         uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7
@@ -294,17 +288,21 @@ jobs:
               --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
               --release-record "$RELEASE_RECORD" > "$RUNNER_TEMP/acceptance/$(basename "$case" .yaml).json"
           done
-          if [[ -f "$RUNNER_TEMP/acceptance/target.json" ]]; then
-            "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.run evaluation/cases/healthy.yaml \
-              --mode hosted --live --target-record "$RUNNER_TEMP/acceptance/target.json" \
-              --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
-              --release-record "$RELEASE_RECORD" > "$RUNNER_TEMP/acceptance/live.json"
-          fi
           if "$RUNNER_TEMP/evaluation-venv/bin/python" -c 'from runtime.agent import load_config; raise SystemExit(not load_config().get("memory", {}).get("enabled", False))'; then
             "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.context "$SERVICE" "$AZURE_ENV_NAME" "$CANDIDATE_VERSION" \
               --review "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
               --knowledge-manifest "$RUNNER_TEMP/acceptance/knowledge.json" --output "$RUNNER_TEMP/acceptance/context.json"
           fi
+
+      - name: Verify and enable event-driven monitoring
+        if: hashFiles(env.DIAGNOSTICS_INTENT) != ''
+        env:
+          RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
+          FOUNDRY_PROJECT_ID: ${{ vars.AZURE_AI_PROJECT_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+        run: |
+          python3 .github/scripts/diagnostics.py verify
+          python3 .github/scripts/diagnostics.py activate
 
       - name: Retain candidate and evaluation evidence
         if: always() && steps.candidate.outcome == 'success'
