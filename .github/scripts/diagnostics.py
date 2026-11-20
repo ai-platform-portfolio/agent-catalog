@@ -40,7 +40,9 @@ def resolve_target(applications, intent):
 
 
 def prepare(intent, temporary):
-    apps = json.loads(remote('kubectl get applications.argoproj.io -n argocd -o json'))['items']
+    previews = remote('kubectl get applications.argoproj.io -n argocd '
+                      '-l platform.ai-platform-portfolio/preview=true -o json')
+    apps = json.loads(previews)['items']
     target = resolve_target(apps, intent['target'])
     kubeconfig = temporary / 'diagnostics-kubeconfig'
     command('az', 'aks', 'get-credentials', '--resource-group', os.environ['RESOURCE_GROUP'],
