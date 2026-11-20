@@ -430,12 +430,13 @@ Publication credentials are minted only after validation succeeds. Trusted host
 steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
 overwrite another proposal or reopen a closed incident PR.
 
-SRE live monitoring selects the repository, PR and workload in
-`agents/sre/config/diagnostics.yaml`. Delivery resolves the registered namespace
-and AKS API trust, and reconciles the chart's read-only Role and RoleBinding for
-the deployed Foundry instance. Acceptance requires an exact-version live read
-from that target alongside the existing recorded cases. The release checks
-bind the live report to the target, version, source and image.
+SRE monitoring selects a repository, PR and workload in
+`agents/sre/config/diagnostics.yaml`. An AKS Job uses namespace-scoped
+read permissions to collect current readiness and events. Its dedicated
+workload identity calls the pinned Foundry candidate over the existing
+private endpoint. Candidate delivery verifies the Job before enabling
+the existing Argo readiness subscription. Each matching Event UID names
+one Job and its logs record the diagnosis and trace ID.
 
 `evaluation/context.py` checks new-session recall, checkpoint resume and deletion
 using synthetic records, and cleans up only its own records. Its checkpoint

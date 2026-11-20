@@ -1,15 +1,10 @@
 # Consumer-specific subscription to the platform's existing Argo Events bus.
-# Bootstrap supplies the resource watch namespace and existing GitHub App metadata.
+# Delivery supplies the target namespace and immutable release.
 # Agent execution is deployed independently by azure.yaml; no GitOps edit is needed.
 name: agent-catalog-sre
 namespace: agent-catalog-sre
 
 events:
-  githubTokens:
-    dispatch:
-      repository: ai-platform-portfolio/agent-catalog
-      permissions: {contents: write}
-
   sources:
     readiness:
       resource:
@@ -19,7 +14,7 @@ events:
           version: v1
           resource: events
           eventTypes: [ADD]
-          filter: {afterStart: false}
+          filter: {afterStart: true}
 
   sensors:
     readiness:
@@ -38,35 +33,49 @@ events:
               - {path: body.metadata.uid, type: string, value: ['^[a-f0-9-]{36}$']}
       triggers:
         - template:
-            name: dispatch
-            http:
-              url: https://api.github.com/repos/ai-platform-portfolio/agent-catalog/dispatches
-              method: POST
-              timeout: 15
-              headers:
-                Accept: application/vnd.github+json
-                Content-Type: application/json
-              secureHeaders:
-                - name: Authorization
-                  valueFrom:
-                    secretKeyRef: {name: dispatch, key: authorization}
-              payload:
-                - src: {value: agent-incident}
-                  dest: event_type
-                - src: {value: sre}
-                  dest: client_payload.agent
-                - src: {dependencyName: readiness, dataKey: body.metadata.namespace}
-                  dest: client_payload.namespace
-                - src: {value: api}
-                  dest: client_payload.workload
-                - src: {dependencyName: readiness, dataKey: body.metadata.uid}
-                  dest: client_payload.event_uid
-          policy:
-            status: {allow: [204]}
-          retryStrategy: {steps: 3, duration: 5s, factor: 2}
+            name: investigate
+            k8s:
+              operation: create
+              source:
+                resource:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: sre-readiness
+                  spec:
+                    activeDeadlineSeconds: 240
+                    backoffLimit: 0
+                    ttlSecondsAfterFinished: 86400
+                    template:
+                      spec:
+                        serviceAccountName: sre-broker
+                        automountServiceAccountToken: true
+                        restartPolicy: Never
+                        nodeSelector: {agentpool: platform}
+                        securityContext:
+                          runAsNonRoot: true
+                          seccompProfile: {type: RuntimeDefault}
+                        containers:
+                          - name: broker
+                            image: ""
+                            command: [python, -m, tools.broker]
+                            securityContext:
+                              allowPrivilegeEscalation: false
+                              readOnlyRootFilesystem: true
+                              capabilities: {drop: [ALL]}
+                            resources:
+                              requests: {cpu: 50m, memory: 128Mi}
+                              limits: {memory: 256Mi}
+                            volumeMounts:
+                              - {name: identity, mountPath: /var/run/secrets/azure, readOnly: true}
+                        volumes:
+                          - name: identity
+                            projected:
+                              sources:
+                                - serviceAccountToken: {path: token, audience: api://AzureADTokenExchange, expirationSeconds: 3600}
+              parameters:
+                - src:
+                    dependencyName: readiness
+                    dataTemplate: '{{ printf "sre-%s" .Input.body.metadata.uid }}'
+                  dest: metadata.name
           rateLimit: {unit: Minute, requestsPerUnit: 2}
-
-platform:
-  lifecycle:
-    cleanup:
-      enabled: true
