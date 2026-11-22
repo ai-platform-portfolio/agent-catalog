@@ -9,3 +9,5 @@ agents/*/evaluation/results/
 *.tfstate.*
 *.tfplan
 backend.local.hcl
+
+local/image.local.json
