@@ -119,7 +119,7 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && (inputs.operation == '' || inputs.operation == 'deploy')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
@@ -275,12 +275,40 @@ jobs:
           AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
         run: python -m evaluation.release snapshot "$SERVICE" "$RUNNER_TEMP/acceptance"
 
+      - name: Promote the passing candidate and verify the stable endpoint
+        if: success() && github.event_name == 'push'
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVICE: ${{ matrix.agent }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          EXPECTED_REVISION: ${{ github.sha }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+        run: |
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$GITHUB_SHA" ]] || {
+            echo '::error::Refusing automatic promotion from stale main configuration.'
+            exit 1
+          }
+          python -m evaluation.release promote "$SERVICE" "$RUNNER_TEMP/acceptance"
+          version=$(jq -er .smoke.deployment.version "$RUNNER_TEMP/acceptance/routing.json")
+          echo "Stable endpoint verified on v$version." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain automatic promotion and recovery evidence
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: routing-${{ matrix.agent }}-promote
+          path: ${{ runner.temp }}/acceptance/routing.json
+          if-no-files-found: ignore
+
       - name: Retain candidate and evaluation evidence
         if: always() && steps.candidate.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.agent }}
-          path: ${{ runner.temp }}/acceptance
+          path: |
+            ${{ runner.temp }}/acceptance
+            !${{ runner.temp }}/acceptance/routing.json
           if-no-files-found: error
 
   release:

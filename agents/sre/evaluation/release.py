@@ -99,9 +99,10 @@ def snapshot(service, directory):
     (directory / 'serving.json').write_text(json.dumps({'version': serving}))
     with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
         summary.write(f'### `{service}` candidate v{version}\n\n'
-                      f'Serving v{serving}. Review the human rubric in `release-{service}`. '
-                      f'Then dispatch promote on main with agent `{service}` '
-                      f'and release-run `{os.environ["GITHUB_RUN_ID"]}`.\n')
+                      f'Serving v{serving} before promotion. Evaluation reports are in `release-{service}`.\n\n')
+        if os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+            summary.write(f'To promote this manually deployed candidate, dispatch promote with agent '
+                          f'`{service}` and release-run `{os.environ["GITHUB_RUN_ID"]}`.\n')
 
 
 def expected_serving_version(directory, operation):
@@ -208,6 +209,23 @@ def route(service, version, directory, *, expected_version, review, operation='p
         (directory / 'routing.json').write_text(json.dumps(record, indent=2))
 
 
+def release_authorization(operation):
+    repository_url = f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}'
+    run = os.environ['GITHUB_RUN_ID']
+    record = {'approved': True, 'url': f'{repository_url}/actions/runs/{run}',
+              'actor': os.environ['GITHUB_ACTOR'], 'triggering_actor': os.environ['GITHUB_TRIGGERING_ACTOR']}
+    event = os.environ['GITHUB_EVENT_NAME']
+    if os.environ['GITHUB_REF'] != 'refs/heads/main':
+        raise ValueError('Route changes require the main branch')
+    if event == 'workflow_dispatch':
+        return {**record, 'authorization': 'workflow_dispatch', 'source_run': os.environ['RELEASE_RUN']}
+    if (event == 'push' and operation == 'promote'
+            and os.environ['EXPECTED_REVISION'] == os.environ['GITHUB_SHA']):
+        return {**record, 'authorization': 'main_push', 'source_run': run,
+                'human_rubric_reviewed': False}
+    raise ValueError('Automatic promotion requires evidence from the current main push')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=['snapshot', 'promote', 'rollback'])
@@ -217,11 +235,7 @@ if __name__ == '__main__':
     if args.operation == 'snapshot':
         snapshot(args.service, args.evidence)
     else:
-        repository_url = f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}'
         route(args.service, release_version(args.evidence), args.evidence,
               expected_version=expected_serving_version(args.evidence, args.operation),
-              review={'approved': True, 'url': f'{repository_url}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
-                      'actor': os.environ['GITHUB_ACTOR'],
-                      'triggering_actor': os.environ['GITHUB_TRIGGERING_ACTOR'],
-                      'source_run': os.environ['RELEASE_RUN']},
+              review=release_authorization(args.operation),
               operation=args.operation, reason=os.getenv('ROLLBACK_REASON', ''))

@@ -14,7 +14,9 @@ from unittest.mock import patch
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 import yaml
 
-from evaluation.release import expected_serving_version, route, smoke, snapshot, validate_evidence
+from evaluation.release import (
+    expected_serving_version, release_authorization, route, smoke, snapshot, validate_evidence,
+)
 from evaluation.context import check as check_context
 from evaluation.run import candidate_request, load_case, score
 from hosting.server import investigate
@@ -208,14 +210,37 @@ class ReleaseTests(unittest.TestCase):
         summary = self.root / 'summary.md'
         endpoint = {'version_selector': {'version_selection_rules': [
             {'type': 'FixedRatio', 'agent_version': '6', 'traffic_percentage': 100}]}}
-        with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary), 'GITHUB_RUN_ID': '123'}), patch(
+        with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary), 'GITHUB_RUN_ID': '123',
+                                     'GITHUB_EVENT_NAME': 'push'}), patch(
                 'evaluation.release.endpoint_state', return_value=endpoint):
             snapshot('sre', self.root)
             self.assertEqual(json.loads((self.root / 'serving.json').read_text()), {'version': '6'})
-            self.assertIn('release-run `123`', summary.read_text())
+            self.assertIn('Serving v6 before promotion', summary.read_text())
+            self.assertNotIn('dispatch', summary.read_text())
             endpoint['version_selector']['version_selection_rules'][0]['traffic_percentage'] = 50
             with self.assertRaisesRegex(ValueError, 'fixed serving route'):
                 snapshot('sre', self.root)
+
+    def test_release_authorization_binds_automatic_promotion_to_current_main_run(self):
+        environment = {'GITHUB_SERVER_URL': 'https://github.example.test', 'GITHUB_REPOSITORY': 'org/catalog',
+                       'GITHUB_RUN_ID': '123', 'GITHUB_ACTOR': 'actor', 'GITHUB_TRIGGERING_ACTOR': 'trigger',
+                       'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': 'b' * 40,
+                       'RELEASE_RUN': 'older-run'}
+        with patch.dict(os.environ, environment):
+            authorization = release_authorization('promote')
+            self.assertEqual(authorization['source_run'], '123')
+            self.assertEqual(authorization['authorization'], 'main_push')
+            self.assertFalse(authorization['human_rubric_reviewed'])
+            with self.assertRaisesRegex(ValueError, 'current main push'):
+                release_authorization('rollback')
+            with patch.dict(os.environ, {'EXPECTED_REVISION': 'c' * 40}), self.assertRaises(ValueError):
+                release_authorization('promote')
+            with patch.dict(os.environ, {'GITHUB_REF': 'refs/heads/other'}), self.assertRaises(ValueError):
+                release_authorization('promote')
+            with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'workflow_dispatch'}):
+                authorization = release_authorization('rollback')
+                self.assertEqual(authorization['source_run'], 'older-run')
+                self.assertEqual(authorization['authorization'], 'workflow_dispatch')
 
     def test_expected_serving_version_uses_snapshot_and_supports_legacy_runs(self):
         with patch.dict(os.environ, {'EXPECTED_SERVING_VERSION': '6'}):
