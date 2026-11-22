@@ -21,25 +21,12 @@ on:
         description: Agent directory name; required for promotion/rollback.
         type: string
 
-      version:
-        description: Exact validated Foundry version for promotion/rollback.
-        type: string
-
       release-run:
-        description: Successful main deployment run containing that version's evaluation artifacts.
+        description: Successful main deployment run ID whose evaluation you reviewed.
         type: string
 
       expected-serving-version:
-        description: Exact current serving version reviewed for this route change.
-        type: string
-
-      review-approved:
-        description: Confirm that the evaluation and human rubric have been reviewed and approved.
-        type: boolean
-        default: false
-
-      review-url:
-        description: HTTPS reference to the approval review.
+        description: Current serving version, required for rollback and older evaluation runs.
         type: string
 
       rollback-reason:
@@ -281,6 +268,13 @@ jobs:
               --knowledge-manifest "$RUNNER_TEMP/acceptance/knowledge.json" --output "$RUNNER_TEMP/acceptance/context.json"
           fi
 
+      - name: Record serving version for promotion
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          SERVICE: ${{ matrix.agent }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+        run: python -m evaluation.release snapshot "$SERVICE" "$RUNNER_TEMP/acceptance"
+
       - name: Retain candidate and evaluation evidence
         if: always() && steps.candidate.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -320,15 +314,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_RUN: ${{ inputs.release-run }}
-          VERSION: ${{ inputs.version }}
         run: |
-          [[ "$RELEASE_RUN" =~ ^[1-9][0-9]*$ && "$VERSION" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$RELEASE_RUN" =~ ^[1-9][0-9]*$ ]] || exit 1
           [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$GITHUB_SHA" ]] || {
             echo '::error::Refusing a route change from stale main configuration.'
             exit 1
           }
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN" > "$RUNNER_TEMP/source-run.json"
-          jq -e '.conclusion == "success" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/deploy-agents.yml"' "$RUNNER_TEMP/source-run.json" > /dev/null
+          jq -e '.conclusion == "success" and .head_branch == "main" and .head_repository.full_name == .repository.full_name and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/deploy-agents.yml"' "$RUNNER_TEMP/source-run.json" > /dev/null
           echo "revision=$(jq -r .head_sha "$RUNNER_TEMP/source-run.json")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -368,25 +361,25 @@ jobs:
         working-directory: agents/${{ matrix.agent }}
         env:
           SERVICE: ${{ matrix.agent }}
-          VERSION: ${{ inputs.version }}
           AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
           EXPECTED_REVISION: ${{ steps.evidence.outputs.revision }}
           EXPECTED_SERVING_VERSION: ${{ inputs.expected-serving-version }}
-          REVIEW_APPROVED: ${{ inputs.review-approved }}
-          REVIEW_URL: ${{ inputs.review-url }}
+          RELEASE_RUN: ${{ inputs.release-run }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           RELEASE_OPERATION: ${{ inputs.operation }}
           ROLLBACK_REASON: ${{ inputs.rollback-reason }}
         run: |
           python3 -m venv "$RUNNER_TEMP/evaluation-venv"
           "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
-          "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.release "$SERVICE" "$VERSION" "$RUNNER_TEMP/acceptance"
+          "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.release "$RELEASE_OPERATION" "$SERVICE" "$RUNNER_TEMP/acceptance"
 
-      - name: Retain verified route change
+      - name: Retain route change and recovery evidence
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: routing-${{ matrix.agent }}-${{ inputs.operation }}
           path: ${{ runner.temp }}/acceptance/routing.json
-          if-no-files-found: error
+          if-no-files-found: ignore
 
   linear:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository

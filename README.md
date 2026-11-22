@@ -338,20 +338,27 @@ endpoint may serve that initial candidate before evaluation completes. Keep its
 Entra-protected URL undistributed until acceptance, then explicitly promote/pin
 the validated version before deploying another candidate.
 
-Review the reports and human rubric, then manually run this same workflow on
-`main` with operation `promote`, the agent directory, exact numeric `version`, and
-`release-run` containing its successful deployment/evaluation. `rollback` uses the
-same inputs for an earlier validated version. Neither operation rebuilds or
-creates a version. The workflow verifies the source run, artifact revision,
-current case versions, live image/revision and endpoint authentication/protocols;
-then changes only the native version selector to100% and verifies readback.
-Agent-scoped concurrency serializes deployments and route changes.
+Review the reports and human rubric, then run **Deploy catalog agents** on
+`main` with operation `promote`, the agent directory, and the successful
+`release-run` ID from the candidate run summary. Dispatch records the GitHub
+actor and run as the approval. The workflow derives the exact version from
+that run's immutable release artifact and verifies that the serving version
+still matches its evaluation snapshot. For older artifacts without a snapshot,
+also enter `expected-serving-version`.
 
-Rollback requires the earlier version and its artifacts to still exist. Changed
-evaluation cases require new acceptance evidence. Review old reports before
-routing; green automated checks are not a claim of diagnostic accuracy. Native
-Foundry version/session commands remain azd-owned; the Python adapters only
-handle YAML/JSON and acceptance policy, with no custom Azure deployment API.
+The workflow verifies the source run, artifact revision, current case versions,
+live image/revision and endpoint authentication/protocols. It routes 100% of
+new sessions to the validated version, reads back the selector, then invokes a
+recorded healthy case through a fresh, unpinned session. If verification fails,
+it restores the previous fixed route when the endpoint still points to the
+attempted version. Routing records include smoke and recovery results. Existing
+sessions keep their bound Foundry version.
+
+To roll back, dispatch `rollback` with the earlier successful `release-run`,
+`expected-serving-version` and `rollback-reason`. The earlier version and its
+artifacts must still exist. A route change reuses the existing Azure OIDC login
+and agent-scoped workflow concurrency. Changed evaluation cases require new
+acceptance evidence.
 
 ## What changes for another agent
 
