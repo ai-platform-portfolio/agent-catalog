@@ -12,21 +12,21 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Deploy a candidate, or route to a release after reviewing its evaluation artifacts.
+        description: Deploy and promote an evaluated candidate, or roll back.
         type: choice
-        options: [deploy, promote, rollback]
+        options: [deploy, rollback]
         default: deploy
 
       agent:
-        description: Agent directory name; required for promotion/rollback.
+        description: Agent directory name; required for rollback.
         type: string
 
       release-run:
-        description: Successful main deployment run ID whose evaluation you reviewed.
+        description: Successful deployment run ID for the rollback target.
         type: string
 
       expected-serving-version:
-        description: Current serving version, required for rollback and older evaluation runs.
+        description: Current serving version, required for rollback.
         type: string
 
       rollback-reason:
@@ -62,7 +62,7 @@ jobs:
           SELECTED_AGENT: ${{ inputs.agent }}
         run: |
           if [[ "$OPERATION" != deploy && ! "$SELECTED_AGENT" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-            echo '::error::Promotion/rollback needs one explicit agent directory.'
+            echo '::error::Rollback needs one explicit agent directory.'
             exit 1
           fi
           agents='[]'
@@ -268,54 +268,37 @@ jobs:
               --knowledge-manifest "$RUNNER_TEMP/acceptance/knowledge.json" --output "$RUNNER_TEMP/acceptance/context.json"
           fi
 
-      - name: Record serving version for promotion
-        working-directory: agents/${{ matrix.agent }}
-        env:
-          SERVICE: ${{ matrix.agent }}
-          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
-        run: python -m evaluation.release snapshot "$SERVICE" "$RUNNER_TEMP/acceptance"
-
       - name: Promote the passing candidate and verify the stable endpoint
-        if: success() && github.event_name == 'push'
         working-directory: agents/${{ matrix.agent }}
         env:
           GH_TOKEN: ${{ github.token }}
           SERVICE: ${{ matrix.agent }}
           AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
           EXPECTED_REVISION: ${{ github.sha }}
+          EXPECTED_SERVING_VERSION: ${{ steps.candidate.outputs.serving-version || '1' }}
+          RELEASE_RUN: ${{ github.run_id }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
         run: |
           [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$GITHUB_SHA" ]] || {
-            echo '::error::Refusing automatic promotion from stale main configuration.'
+            echo '::error::Refusing promotion from stale main configuration.'
             exit 1
           }
           python -m evaluation.release promote "$SERVICE" "$RUNNER_TEMP/acceptance"
-          version=$(jq -er .smoke.deployment.version "$RUNNER_TEMP/acceptance/routing.json")
-          echo "Stable endpoint verified on v$version." >> "$GITHUB_STEP_SUMMARY"
+          echo "Stable endpoint verified on v$(jq -r .smoke.deployment.version "$RUNNER_TEMP/acceptance/routing.json")." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Retain automatic promotion and recovery evidence
-        if: always() && github.event_name == 'push'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: routing-${{ matrix.agent }}-promote
-          path: ${{ runner.temp }}/acceptance/routing.json
-          if-no-files-found: ignore
-
-      - name: Retain candidate and evaluation evidence
+      - name: Retain evaluation and routing evidence
         if: always() && steps.candidate.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.agent }}
-          path: |
-            ${{ runner.temp }}/acceptance
-            !${{ runner.temp }}/acceptance/routing.json
+          path: ${{ runner.temp }}/acceptance
           if-no-files-found: error
 
-  release:
+  rollback:
     needs: discover
     if: >-
       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
-      (inputs.operation == 'promote' || inputs.operation == 'rollback')
+      inputs.operation == 'rollback'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -394,19 +377,18 @@ jobs:
           EXPECTED_SERVING_VERSION: ${{ inputs.expected-serving-version }}
           RELEASE_RUN: ${{ inputs.release-run }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-          RELEASE_OPERATION: ${{ inputs.operation }}
           ROLLBACK_REASON: ${{ inputs.rollback-reason }}
         run: |
           python3 -m venv "$RUNNER_TEMP/evaluation-venv"
           "$RUNNER_TEMP/evaluation-venv/bin/pip" install --require-hashes --only-binary=:all: -r image/requirements.txt
-          "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.release "$RELEASE_OPERATION" "$SERVICE" "$RUNNER_TEMP/acceptance"
+          "$RUNNER_TEMP/evaluation-venv/bin/python" -m evaluation.release rollback "$SERVICE" "$RUNNER_TEMP/acceptance"
 
       - name: Retain route change and recovery evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: routing-${{ matrix.agent }}-${{ inputs.operation }}
-          path: ${{ runner.temp }}/acceptance/routing.json
+          name: routing-${{ matrix.agent }}-rollback
+          path: ${{ runner.temp }}/acceptance/rollback.json
           if-no-files-found: ignore
 
   linear:

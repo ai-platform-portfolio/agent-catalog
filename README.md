@@ -228,8 +228,8 @@ behavior remain explicit live gates. Claude/Gemini are not configured by this sc
 filename is the reusable discovery convention: another repository can expose the
 same native caller without adding a registration to GitOps. Make waits for the
 exact deployment/acceptance run and propagates failure. Builds reuse the existing
-cache, digest handoff and security scan. Existing serving routes remain protected;
-this does not automatically promote a candidate or complete human rubric review.
+cache, digest handoff and security scan. This uses the same evaluation and
+automatic promotion as a merge to `main`.
 
 ### Image and native deployment
 
@@ -325,35 +325,28 @@ rubrics check contracts; diagnosis quality still requires the human rubric.
 
 ## Candidate acceptance, promotion and rollback
 
-Merging to `main` starts the release. The workflow builds and scans an
-immutable image, deploys a candidate with native azd, and keeps the current
-fixed serving route while it runs the hosted recorded cases on the exact
-candidate version. The returned image, revision, version and automated
-checks must pass. An evaluation failure stops promotion.
+The existing workflow builds/scans/pushes an immutable image, preserves the
+existing fixed serving route, and deploys a candidate through native azd. It then
+invokes the **numeric candidate version**, using new version-pinned sessions for
+each recorded case. Both the returned image/source/version and the contract
+checks must match. A `release-<agent>` artifact retains the record and reports.
+Failures prevent a successful release record; they never automatically move an
+existing fixed serving route. Split/unpinned existing routes require review.
 
-The same job promotes the passing candidate under the existing per-agent
-lock and Azure OIDC login. It verifies that the revision is still current
-on `main` and that the serving selector matches its snapshot. It then routes
-new sessions to the validated version and smoke-tests a fresh request
-through the stable endpoint. If verification fails and the attempted version
-still owns the route, the workflow restores the prior fixed selector.
-Existing sessions keep their bound version.
+A merge to `main` or a `deploy` dispatch promotes the passing candidate in
+the same job. The workflow verifies that main and the preserved serving
+version are still current, then routes new sessions to the candidate and
+smoke-tests the stable endpoint. Failed smoke restores the prior fixed route
+when the attempted version still owns it. The `release-<agent>` artifact
+includes `routing.json`. The reports retain the rubric for optional human review.
 
-The run summary reports the verified serving version. The `release-<agent>`
-artifact contains the case reports, including the human rubrics for inspecting
-diagnosis quality. Automatic promotion uses the automated checks. The
-`routing-<agent>-promote` artifact records the main push, route, smoke, and
-any recovery results.
+On the first release, Foundry can serve the initial version during evaluation.
+Keep its Entra-protected URL undistributed until the stable smoke passes.
 
-On the first release, Foundry can serve the initial version before evaluation
-completes. Keep its Entra-protected URL undistributed until the stable smoke
-passes. The first release has no prior version to restore.
-
-To roll back, dispatch `rollback` on `main` with the agent, an earlier
+For manual rollback, dispatch `rollback` on `main` with the agent, an earlier
 successful `release-run`, `expected-serving-version`, and `rollback-reason`.
 The earlier version and its artifacts must still exist. Changed evaluation
-cases require new acceptance evidence. Manual `deploy` and `promote` remain
-available for an explicitly staged candidate.
+cases require new acceptance evidence.
 
 ## What changes for another agent
 

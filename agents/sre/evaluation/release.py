@@ -85,37 +85,6 @@ def release_version(directory):
     return version
 
 
-def snapshot(service, directory):
-    version = release_version(directory)
-    rules = selector(endpoint_state(service))
-    if not rules and version == '1':
-        serving = '1'
-    elif len(rules) == 1 and rules == [fixed_rule(rules[0].get('agent_version'))]:
-        serving = rules[0]['agent_version']
-        if not re.fullmatch(r'[1-9][0-9]*', serving or ''):
-            raise ValueError('Serving version is not numeric')
-    else:
-        raise ValueError('Expected a fixed serving route after candidate evaluation')
-    (directory / 'serving.json').write_text(json.dumps({'version': serving}))
-    with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
-        summary.write(f'### `{service}` candidate v{version}\n\n'
-                      f'Serving v{serving} before promotion. Evaluation reports are in `release-{service}`.\n\n')
-        if os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch':
-            summary.write(f'To promote this manually deployed candidate, dispatch promote with agent '
-                          f'`{service}` and release-run `{os.environ["GITHUB_RUN_ID"]}`.\n')
-
-
-def expected_serving_version(directory, operation):
-    expected = os.getenv('EXPECTED_SERVING_VERSION', '')
-    recorded = directory / 'serving.json'
-    if operation == 'promote' and recorded.is_file():
-        serving = json.loads(recorded.read_text())['version']
-        if expected and expected != serving:
-            raise ValueError('Expected serving version differs from the evaluated snapshot')
-        return serving
-    return expected
-
-
 def smoke(agent, version, release=None):
     project = os.environ['FOUNDRY_PROJECT_ENDPOINT'].rstrip('/')
     endpoint = f'{project}/agents/{agent}/endpoint/protocols/invocations'
@@ -206,36 +175,20 @@ def route(service, version, directory, *, expected_version, review, operation='p
                 raise RuntimeError('Route change failed and automatic recovery could not be verified') from None
         raise RuntimeError('Route change failed; see routing evidence for the serving state') from None
     finally:
-        (directory / 'routing.json').write_text(json.dumps(record, indent=2))
-
-
-def release_authorization(operation):
-    repository_url = f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}'
-    run = os.environ['GITHUB_RUN_ID']
-    record = {'approved': True, 'url': f'{repository_url}/actions/runs/{run}',
-              'actor': os.environ['GITHUB_ACTOR'], 'triggering_actor': os.environ['GITHUB_TRIGGERING_ACTOR']}
-    event = os.environ['GITHUB_EVENT_NAME']
-    if os.environ['GITHUB_REF'] != 'refs/heads/main':
-        raise ValueError('Route changes require the main branch')
-    if event == 'workflow_dispatch':
-        return {**record, 'authorization': 'workflow_dispatch', 'source_run': os.environ['RELEASE_RUN']}
-    if (event == 'push' and operation == 'promote'
-            and os.environ['EXPECTED_REVISION'] == os.environ['GITHUB_SHA']):
-        return {**record, 'authorization': 'main_push', 'source_run': run,
-                'human_rubric_reviewed': False}
-    raise ValueError('Automatic promotion requires evidence from the current main push')
+        report = 'rollback.json' if operation == 'rollback' else 'routing.json'
+        (directory / report).write_text(json.dumps(record, indent=2))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['snapshot', 'promote', 'rollback'])
+    parser.add_argument('operation', choices=['promote', 'rollback'])
     parser.add_argument('service')
     parser.add_argument('evidence', type=Path)
     args = parser.parse_args()
-    if args.operation == 'snapshot':
-        snapshot(args.service, args.evidence)
-    else:
-        route(args.service, release_version(args.evidence), args.evidence,
-              expected_version=expected_serving_version(args.evidence, args.operation),
-              review=release_authorization(args.operation),
-              operation=args.operation, reason=os.getenv('ROLLBACK_REASON', ''))
+    repository_url = f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}'
+    route(args.service, release_version(args.evidence), args.evidence,
+          expected_version=os.environ['EXPECTED_SERVING_VERSION'],
+          review={'approved': True, 'url': f'{repository_url}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+                  'actor': os.environ['GITHUB_ACTOR'], 'triggering_actor': os.environ['GITHUB_TRIGGERING_ACTOR'],
+                  'source_run': os.environ['RELEASE_RUN'], 'human_rubric_reviewed': False},
+          operation=args.operation, reason=os.getenv('ROLLBACK_REASON', ''))
