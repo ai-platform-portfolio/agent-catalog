@@ -1,4 +1,120 @@
-# Foundry agent template
+# SRE agent local iteration
+
+This branch deploys `agent-catalog-sre-local` from your workstation using Docker,
+Azure CLI and the single [Terraform root](local/main.tf). It uses the existing
+management Foundry project, registry and model gateway. The image, Foundry agent,
+native state and gateway consumer have their own temporary names. Foundry uses
+`id-management-foundry` for project infrastructure and image pulls, and creates a
+separate runtime principal for the new agent.
+
+The SRE investigation loop, tools, runbooks, memory and evaluation cases use the
+same source as the main branch. The local endpoint accepts recorded or manually
+collected evidence. The standing AKS broker and readiness Sensor continue to
+serve the existing agent. Their [delivery configuration on main](https://github.com/ai-platform-portfolio/agent-catalog/tree/main)
+provides the production reference below.
+
+## Set up the temporary gateway consumer once
+
+Use the Azure CLI session for the management subscription, with permission to
+publish to `localacrk8s`, deploy in the Foundry project and register the existing
+chart in AKS. This assumes the shared gateway and its accounting store are ready.
+From the catalog root, install the same hash-locked runtime used by the image:
+
+```sh
+python3.12 -m venv .venv
+.venv/bin/pip install --require-hashes --only-binary=:all: -r agents/sre/image/requirements.txt
+export PATH="$PWD/.venv/bin:$PATH"
+```
+
+Run the existing gateway helper from the sibling repos in this workspace. It
+renders connection metadata for the temporary name using the existing
+`bounded-agent` policy and pins Argo to the published policy on main. Keep this
+shell and its scratch directory for the first apply and gateway registration.
+
+```sh
+export GITHUB_WORKSPACE="$PWD" GITHUB_REPOSITORY=ai-platform-portfolio/agent-catalog
+export GITHUB_SHA="$(git rev-parse origin/main)"
+export SERVICE=agent-catalog-sre-local AGENT_DIRECTORY="$PWD/agents/sre"
+export RESOURCE_GROUP=rg-management CLUSTER=aks-management
+export CHART_REVISION=bbc8ad6eae460f0a77d26e918b34c9b56ff0f096
+export RUNNER_TEMP="$(mktemp -d)"
+export GITHUB_ENV="$RUNNER_TEMP/env" GITHUB_OUTPUT="$RUNNER_TEMP/outputs"
+export CHART_DIRECTORY="$RUNNER_TEMP/chart"
+git -C ../application-helm-chart worktree add --detach "$CHART_DIRECTORY" "$CHART_REVISION"
+git -C ../ops-shared show 81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7:.github/actions/gateway-access/access.py > "$RUNNER_TEMP/gateway.py"
+OPERATION=configure python "$RUNNER_TEMP/gateway.py"
+export TF_VAR_gateway_connection="$(cat "$RUNNER_TEMP/gateway-$SERVICE/connection.json")"
+```
+
+Save `connection.json` somewhere private if you want to reload it between
+shells. It contains public connection metadata and versionless Key Vault URIs.
+
+## Build, apply and evaluate
+
+From the catalog root, run this after an edit. The source revision describes the
+checked-in base. Uncommitted prompt and Python edits are captured by the new
+image digest. Commit and publish runbook changes before using them so their
+citation URLs match the built content. After a platform rebuild, set
+`TF_VAR_project_endpoint` to the current management project endpoint.
+
+```sh
+export TF_VAR_source_revision="$(git rev-parse HEAD)"
+export TF_VAR_knowledge_manifest="$(python -c '
+import json, os
+from portfolio_agent_runtime.knowledge import publish
+path = "agents/sre/knowledge"
+print(json.dumps(publish(path, os.environ["TF_VAR_source_revision"],
+                         "ai-platform-portfolio/agent-catalog", path)))
+')"
+repo=localacrk8s.azurecr.io/agents/ai-platform-portfolio/agent-catalog/sre-local
+az acr login --name localacrk8s
+rm -f local/image.local.json
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  --file agents/sre/image/Dockerfile --tag "$repo:$(date +%s)" \
+  --push --metadata-file local/image.local.json agents/sre
+export TF_VAR_image="$repo@$(jq -er '."containerimage.digest"' local/image.local.json)"
+terraform -chdir=local init
+terraform -chdir=local apply
+```
+
+After the **first** apply, register the runtime principal with the existing
+chart. Here the release record’s revision is the published **policy** revision
+selected for Argo. Terraform sets the actual image source revision independently.
+If the platform reports `ACCOUNTING_RESTORE_REQUIRED`, reconcile the temporary
+consumer owner under the existing accounting policy before retrying. If Foundry
+is still creating the runtime principal, run `terraform -chdir=local apply
+-refresh-only` after it is ready to refresh the output.
+
+```sh
+export RELEASE_RECORD="$RUNNER_TEMP/release.json"
+jq -n --arg agent "$SERVICE" --arg source_revision "$GITHUB_SHA" \
+  --arg instance_principal_id "$(terraform -chdir=local output -raw runtime_principal_id)" \
+  '$ARGS.named' > "$RELEASE_RECORD"
+OPERATION=apply python "$RUNNER_TEMP/gateway.py"
+```
+
+Wait for the exact version to become `active` before evaluating. From the catalog
+root, using the same authorized Azure CLI session:
+
+```sh
+export SRE_LOCAL_VERSION="$(terraform -chdir=local output -raw agent_version)"
+export SRE_LOCAL_ENDPOINT="$(terraform -chdir=local output -raw invocations_endpoint)"
+az rest --resource https://ai.azure.com \
+  --url "${SRE_LOCAL_ENDPOINT%/endpoint/protocols/invocations}/versions/$SRE_LOCAL_VERSION?api-version=v1" \
+  --query status -o tsv
+(cd agents/sre && python -m evaluation.run evaluation/cases/readiness-fault.yaml \
+  --mode hosted --endpoint "$SRE_LOCAL_ENDPOINT" --expected-version "$SRE_LOCAL_VERSION")
+```
+
+For cleanup, delete the temporary Argo gateway Application whose name is in
+`gateway-$SERVICE/values.json` and wait for its chart-owned cleanup to complete.
+Then run `terraform -chdir=local destroy` with the same inputs. The local state
+owns only the temporary Foundry agent. Delete its temporary ACR images if they
+are no longer needed.
+
+---
+
+## Main branch architecture and delivery reference
 
 A complete, inspectable agent hosted in **Microsoft Foundry**. SRE is the first
 case study: its instructions, tools and evaluation data can change without
@@ -255,7 +371,7 @@ and regenerate hashes into a temporary file before replacing this list. There is
 no second dependency declaration to synchronise. Builds require binary wheels so
 package installation does not introduce unpinned source-build dependencies.
 
-[deploy-agents.yml](.github/workflows/deploy-agents.yml) discovers `agents/*/`
+[deploy-agents.yml](https://github.com/ai-platform-portfolio/agent-catalog/blob/main/.github/workflows/deploy-agents.yml) discovers `agents/*/`
 and calls the existing scalar shared Docker workflow for each agent. PR builds
 run tests and scan the local image without publishing or Azure login. Main
 publication pushes to ACR, scans by digest, then releases a per-agent image record. HIGH/CRITICAL findings block
@@ -468,7 +584,7 @@ The site documents the agents in this repository. Add a matching `site/image/age
 `agents/`. Its overview is packaged in the same revision as the site for production
 and PR previews.
 
-[Catalog site delivery](.github/workflows/catalog-site.yml) uses the shared Docker,
+[Catalog site delivery](https://github.com/ai-platform-portfolio/agent-catalog/blob/main/.github/workflows/catalog-site.yml) uses the shared Docker,
 OpenTofu, and Container Apps preview building blocks. Production runs at
 `agent-catalog.dev.michaelalinks.com` after deployment, with one warm replica.
 Same-repository PRs get HTTPS previews that scale to zero and are removed on close.
