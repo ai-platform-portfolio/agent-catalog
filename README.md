@@ -171,7 +171,7 @@ The default `DIAGNOSTICS_BACKEND: provided` accepts explicitly labelled,
 caller-provided evidence. With no evidence, no tools are advertised and the agent
 must abstain. It does not silently fall back to live access.
 
-Delivery derives these environment values from the declared diagnostics target and AKS metadata:
+An operator can configure direct read-only AKS access with these environment values:
 
 ```yaml
 DIAGNOSTICS_BACKEND: kubernetes
@@ -186,7 +186,7 @@ Rollouts, Pods, events and Pod logs in that namespace. It also needs network acc
 to the API. The implementation uses Azure Identity tokens for the AKS server
 application, TLS verification and fixed GET requests. The configured namespace
 bounds which incidents the live collectors accept.
-The shared chart renders the target reader binding during candidate delivery. No network exception is configured.
+Direct AKS access requires a separately configured reader binding and network route.
 If packaging a trusted public CA, explicitly allow that file in `.dockerignore`;
 private keys and local environment files remain excluded.
 
@@ -195,7 +195,7 @@ gateway that accepts Entra tokens for `METRICS_TOKEN_SCOPE`. If absent,
 `service_metrics` is not exposed. The archive's in-cluster Mimir address is not
 reused. Browser SSO alone does not prove machine-to-machine access to that gateway.
 These integrations need live authorization/connectivity verification before a
-live-tool evaluation can be claimed. A live backend rejects caller-provided evidence.
+live-tool evaluation can be claimed. Explicit caller-provided evidence runs without live collection.
 
 ## Build and delivery
 
@@ -402,7 +402,7 @@ flowchart LR
 | Thin runtime binding, instructions and case-study tools | `agents/sre/runtime`, `config`, `tools` |
 | Foundry protocol adapter and composition | `agents/sre/hosting` |
 | Model/tool loop, grading, native JSON context, knowledge, intake and bounded coding capabilities | Released `application-library/agent-runtime` package |
-| Event/credential/RBAC templates | `application-helm-chart/templates/events` and `templates/credentials` |
+| Gateway credential and RBAC templates | `application-helm-chart/templates/credentials` |
 | Publication and incident orchestration | `deploy-agents.yml` and `incident.yml`; separate lifecycle purposes |
 | Scalar native invocation and scoped App token actions | `ops-shared` |
 | Embedding foundation | Existing GitOps bootstrap Foundry deployment map |
@@ -430,13 +430,16 @@ Publication credentials are minted only after validation succeeds. Trusted host
 steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
 overwrite another proposal or reopen a closed incident PR.
 
-SRE monitoring selects a repository, PR and workload in
-`agents/sre/config/diagnostics.yaml`. An AKS Job uses namespace-scoped
-read permissions to collect current readiness and events. Its dedicated
-workload identity calls the pinned Foundry candidate over the existing
-private endpoint. Candidate delivery verifies the Job before enabling
-the existing Argo readiness subscription. Each matching Event UID names
-one Job and its logs record the diagnosis and trace ID.
+Grafana evaluates readiness alerts from Kubernetes Events collected by the
+platform's existing Alloy collector into Loki. Open the alert in Grafana,
+collect relevant Events and pod logs for the incident window, and submit a
+bounded evidence snapshot to the Foundry Invocations endpoint on demand.
+Use the `workload_state` and `recent_events` evidence shapes in
+[`evaluation/cases/readiness-fault.yaml`](agents/sre/evaluation/cases/readiness-fault.yaml).
+Include workload readiness counts from Mimir or the approved Kubernetes API
+when a readiness diagnosis requires them. The agent labels the snapshot as
+caller-provided. Candidate delivery runs pinned hosted replays and context
+checks independently of Grafana alerting.
 
 `evaluation/context.py` checks new-session recall, checkpoint resume and deletion
 using synthetic records, and cleans up only its own records. Its checkpoint
@@ -449,8 +452,7 @@ checks are implemented but have not run against the hosted candidate. Container
 restart, a second genuinely authenticated caller, server TTL enforcement, live
 diagnostics/traces and the controlled event-to-draft chain remain live acceptance gates. Merging source does not prove any of them.
 
-Stop/delete the event subscription before retiring the hosted agent; drain or
-cancel active incident runs. Retain earlier versions and their knowledge manifests
+Drain or cancel active incident runs before retiring the hosted agent. Retain earlier versions and their knowledge manifests
 for rollback. Delete retired knowledge with the shared ownership-checked cleanup
 function after no live version references it. Native agent/project deletion and
 memory retention are distinct from keeping source runbooks in Git.
