@@ -200,9 +200,10 @@ live-tool evaluation can be claimed. Explicit caller-provided evidence runs with
 ### Live acceptance on one existing workload
 
 The target workload owner supplies the current release's `instance_principal_id`
-to the application chart's `platform.credentials.workloadReaders` grant. The
-grant covers one Deployment and Pod/Event lists in the application namespace.
-Validate the binding against the actual hosted identity before enabling it.
+to the application chart's `platform.azure.workloadReaders` grant. Azure AKS RBAC
+Reader applies to that namespace. The agent's collector separately limits which
+Deployment it queries and exposes only workload state and Events. Verify the
+assignment against the actual hosted identity before enabling live diagnostics.
 Keep the existing AKS API network restrictions.
 
 The approved consumer can then opt into live release acceptance in
