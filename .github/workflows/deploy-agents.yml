@@ -5,10 +5,10 @@ name: Deploy catalog agents
 
 on:
   pull_request:
-    paths: ['agents/**', 'deploy/events.yaml', '.github/scripts/**', '.github/workflows/**']
+    paths: ['agents/**', 'deploy/events.yaml', '.github/scripts/**', '.github/workflows/**', '!.github/workflows/catalog-site.yml']
   push:
     branches: [main]
-    paths: ['agents/**', 'deploy/events.yaml', '.github/scripts/**', '.github/workflows/**']
+    paths: ['agents/**', 'deploy/events.yaml', '.github/scripts/**', '.github/workflows/**', '!.github/workflows/catalog-site.yml']
   workflow_dispatch:
     inputs:
       operation:
