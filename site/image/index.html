@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f5f0">
+  <title>$title — Platform engineering</title>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="page">
+    <header class="masthead">
+      <a class="wordmark" href="https://portfolio.dev.michaelalinks.com/" aria-label="Portfolio home">
+        <span class="mark" aria-hidden="true">m<span>l</span></span> Michaela Links
+      </a>
+      <a class="github-link" href="https://github.com/ai-platform-portfolio">GitHub</a>
+    </header>
+
+    <nav class="portfolio-nav" aria-label="Main navigation">
+      <a href="https://portfolio.dev.michaelalinks.com/#platform">Internal Developer Platform</a>
+      <span class="nav-divider" aria-hidden="true"></span>
+      <span role="link" aria-disabled="true">Metrics</span>
+      <span class="nav-divider" aria-hidden="true"></span>
+      <span role="link" aria-disabled="true">Financial Document Consistency</span>
+      <span class="nav-divider" aria-hidden="true"></span>
+      <a class="portfolio-current" href="/agent-catalog"$catalog_current>Agent Catalog</a>
+    </nav>
+
+    <div class="catalog-layout">
+      <aside class="sidebar">
+        <nav aria-label="Catalog navigation">
+          <ul class="navigation">
+            <li>
+              <a class="nav-section" href="/agent-catalog"$catalog_current>Agent Catalog</a>
+              <div class="nav-agents">$nav_agents</div>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main">
+        <h1>$heading</h1>
+        $content
+      </main>
+    </div>
+
+    <footer>
+      <span class="footer-signature">Michaela Links &nbsp;/&nbsp; Platform engineering</span>
+      <a href="https://github.com/ai-platform-portfolio/agent-catalog">View catalog source</a>
+    </footer>
+  </div>
+</body>
+</html>
