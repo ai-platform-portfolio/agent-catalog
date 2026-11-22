@@ -61,6 +61,16 @@ def candidate_request(service, environment, version, payload):
         return result
 
 
+def validate_healthy_live(result, observation):
+    if (observation.get('desired', 0) <= 0 or observation.get('ready') != observation['desired']
+            or observation.get('observed_generation') is None):
+        raise ValueError('Live acceptance needs an independently observed healthy workload')
+    calls = result.get('tool_calls', [])
+    if (result.get('workload_observation') != observation or set(calls) != {'workload_state', 'recent_events'}
+            or result.get('diagnosis', {}).get('decision') != 'abstain'):
+        raise ValueError('Live acceptance disagrees with the healthy workload or required tool calls')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('case', type=Path)
@@ -72,11 +82,14 @@ def main():
     parser.add_argument('--environment', help='Existing azd environment for --service')
     parser.add_argument('--release-record', type=Path, help='Require the returned deployment to match this image/source record')
     parser.add_argument('--target-record', type=Path, help='Resolved namespace/workload for live acceptance')
+    parser.add_argument('--observed-workload', type=Path, help='Independently read healthy workload state')
     args = parser.parse_args()
     if (args.live and args.mode != 'hosted'
             or args.mode == 'hosted' and bool(args.endpoint) == bool(args.service)
             or args.service and (not args.environment or not args.expected_version)):
         parser.error('Hosted mode needs exactly one of --endpoint or --service; --service needs environment/version')
+    if args.observed_workload and not (args.live and args.target_record):
+        parser.error('Independent observation requires live mode and a target record')
     case, payload = load_case(args.case)
     target = None
     if args.target_record:
@@ -86,7 +99,7 @@ def main():
             raise ValueError('A live target needs an explicit namespace and workload')
         payload['incident'].update(target)
         payload['incident']['summary'] = (
-            'Check the configured target\'s current Kubernetes readiness using workload_state. '
+            'Check the configured target\'s current Kubernetes readiness using workload_state and recent_events. '
             'Separate observed workload health from application availability; do not claim a fix or recovery.')
     config = load_config()
     configure()
@@ -105,6 +118,8 @@ def main():
                     raise ValueError('Hosted response does not match the immutable release record')
             if not result.get('trace_id'):
                 raise ValueError('Investigation did not produce a trace identifier')
+            if args.observed_workload:
+                validate_healthy_live(result, json.loads(args.observed_workload.read_text()))
             report = score(case, result, config)
             report['evaluation_trace_id'] = f'{span.get_span_context().trace_id:032x}'
             report['mode'] = args.mode + ('_live' if args.live else '_recorded')

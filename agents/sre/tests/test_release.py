@@ -16,7 +16,8 @@ import yaml
 
 from evaluation.release import route, smoke, validate_evidence
 from evaluation.context import check as check_context
-from evaluation.run import candidate_request, load_case, score
+from evaluation.live import configure, observe
+from evaluation.run import candidate_request, load_case, score, validate_healthy_live
 from hosting.server import investigate
 from runtime.agent import load_config
 from test_agent import Model, local_config
@@ -135,6 +136,31 @@ class ReleaseTests(unittest.TestCase):
             report = score(case, result, load_config())
             report['mode'] = 'hosted_recorded'
             (self.root / (path.stem + '.json')).write_text(json.dumps(report))
+
+    def test_live_acceptance_requires_fresh_matching_observation_and_abstention(self):
+        application = {'spec': {'destination': {'server': 'https://kubernetes.default.svc',
+                                                'namespace': 'preview-one'}}}
+        deployment = {'metadata': {'generation': 2}, 'spec': {'replicas': 1},
+                      'status': {'observedGeneration': 2, 'readyReplicas': 1}}
+        profile = {'clusters': [{'cluster': {'server': 'https://api.example.test',
+                                             'certificate-authority-data': 'cGVt'}}]}
+        environment = self.root / 'environment'
+        with patch.dict(os.environ, {'GITHUB_ENV': str(environment)}), patch(
+                'evaluation.live.read_resource', side_effect=[application, deployment]) as read, patch(
+                'evaluation.live.az_aks', return_value=json.dumps(profile)):
+            configure({'application': 'preview-release', 'workload': 'api'}, self.root)
+            observe(self.root)
+        self.assertEqual(read.call_args_list[0].args, ('argocd', 'application.argoproj.io', 'preview-release'))
+        self.assertEqual(read.call_args_list[1].args, ('preview-one', 'deployment', 'api'))
+        self.assertIn('KUBE_ALLOWED_NAMESPACE=preview-one', environment.read_text())
+        observation = json.loads((self.root / 'live-observation.json').read_text())
+        answer = {'workload_observation': observation, 'tool_calls': ['workload_state', 'recent_events'],
+                  'diagnosis': {'decision': 'abstain'}}
+        validate_healthy_live(answer, observation)
+        for wrong in ({'diagnosis': {'decision': 'actionable'}}, {'tool_calls': ['workload_state']},
+                      {'workload_observation': {**observation, 'ready': 0}}):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                validate_healthy_live({**answer, **wrong}, observation)
 
     def test_evidence_rejects_wrong_version_revision_and_stale_case(self):
         self.assertEqual(validate_evidence(self.root, self.release['agent'], '7'), self.release)

@@ -197,6 +197,32 @@ reused. Browser SSO alone does not prove machine-to-machine access to that gatew
 These integrations need live authorization/connectivity verification before a
 live-tool evaluation can be claimed. Explicit caller-provided evidence runs without live collection.
 
+### Live acceptance on one existing workload
+
+The target workload owner supplies the current release's `instance_principal_id`
+to the application chart's `platform.credentials.workloadReaders` grant. The
+grant covers one Deployment and Pod/Event lists in the application namespace.
+Validate the binding against the actual hosted identity before enabling it.
+Keep the existing AKS API network restrictions.
+
+The approved consumer can then opt into live release acceptance in
+`config/agent.yaml`:
+
+```yaml
+liveDiagnostics:
+  application: <existing-Argo-Application-name>
+  workload: <deployment-name>
+```
+
+The workflow resolves the namespace from that Application and uses AKS
+connection metadata from the existing publisher session. The hosted agent
+uses its own Entra identity at runtime and advertises only workload state and
+events from the last five minutes. Before promotion, the publisher reads the
+healthy Deployment independently and compares replica counts and observed
+generation with the pinned hosted candidate. The candidate must use both tools
+and abstain. The release artifact retains `live.json` with the candidate's trace
+and result. Omit `liveDiagnostics` to keep the standard recorded release path.
+
 ## Build and delivery
 
 ### Model connection intent

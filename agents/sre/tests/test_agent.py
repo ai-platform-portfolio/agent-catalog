@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -203,14 +204,18 @@ class AgentTests(unittest.TestCase):
                     'spec': {'replicas': 1, 'selector': {'matchLabels': {'app': 'api'}}}})
             if request.url.path.endswith('/pods'):
                 return httpx.Response(200, json={'items': [{'metadata': {'name': 'api-pod', 'uid': 'pod-current'}}]})
-            def event(name, uid):
+            def event(name, uid, age, **timestamps):
                 return {'reason': 'Unhealthy', 'message': 'Readiness probe failed: token=private-value',
-                        'involvedObject': {'name': name, 'uid': uid, 'kind': 'Pod'}}
-            return httpx.Response(200, json={'items': [event('api-worker-pod', 'neighbor'),
-                event('api-pod', 'pod-replaced'), event('api-pod', 'pod-current')]})
+                        'involvedObject': {'name': name, 'uid': uid, 'kind': 'Pod'},
+                        'lastTimestamp': (datetime.now(timezone.utc) - timedelta(seconds=age)).isoformat(),
+                        **timestamps}
+            recent = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+            return httpx.Response(200, json={'items': [event('api-worker-pod', 'neighbor', 10),
+                event('api-pod', 'pod-replaced', 10), event('api-pod', 'pod-current', 600),
+                event('api-pod', 'pod-current', 600, series={'lastObservedTime': recent})]})
 
         with httpx.Client(base_url='https://kube.test', transport=httpx.MockTransport(respond)) as client:
-            tools = KubernetesTools(client, 'approved', 'api')
+            tools = KubernetesTools(client, 'approved', 'api', allowed_tools=['workload_state', 'recent_events'])
             for incident in ({'namespace': 'other', 'workload': 'api'},
                              {'namespace': 'approved', 'workload': 'other-service'}):
                 with self.assertRaises(ValueError):
@@ -225,7 +230,9 @@ class AgentTests(unittest.TestCase):
             self.assertEqual([request.method for request in requests], ['GET', 'GET', 'GET'])
             tools.execute('workload_state', incident)
             self.assertEqual(len(requests), 3, 'Workload snapshot should be reused inside one investigation')
-            self.assertNotIn('service_metrics', tools.names)
+            self.assertEqual(tools.names, ['workload_state', 'recent_events'])
+            with self.assertRaisesRegex(ValueError, 'read-only registry'):
+                tools.execute('bounded_logs', incident)
 
     def test_live_rollout_fallback_selects_pods_and_bounds_log_reads(self):
         requests = []
