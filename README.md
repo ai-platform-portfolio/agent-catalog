@@ -228,8 +228,8 @@ behavior remain explicit live gates. Claude/Gemini are not configured by this sc
 filename is the reusable discovery convention: another repository can expose the
 same native caller without adding a registration to GitOps. Make waits for the
 exact deployment/acceptance run and propagates failure. Builds reuse the existing
-cache, digest handoff and security scan. Existing serving routes remain protected;
-this does not automatically promote a candidate or complete human rubric review.
+cache, digest handoff and security scan. This uses the same evaluation and
+automatic promotion as a merge to `main`.
 
 ### Image and native deployment
 
@@ -333,32 +333,20 @@ checks must match. A `release-<agent>` artifact retains the record and reports.
 Failures prevent a successful release record; they never automatically move an
 existing fixed serving route. Split/unpinned existing routes require review.
 
-On the **first release**, there is no previous version to preserve. The native
-endpoint may serve that initial candidate before evaluation completes. Keep its
-Entra-protected URL undistributed until acceptance, then explicitly promote/pin
-the validated version before deploying another candidate.
+A merge to `main` or a `deploy` dispatch promotes the passing candidate in
+the same job. The workflow verifies that main and the preserved serving
+version are still current, then routes new sessions to the candidate and
+smoke-tests the stable endpoint. Failed smoke restores the prior fixed route
+when the attempted version still owns it. The `release-<agent>` artifact
+includes `routing.json`. The reports retain the rubric for optional human review.
 
-Review the reports and human rubric, then run **Deploy catalog agents** on
-`main` with operation `promote`, the agent directory, and the successful
-`release-run` ID from the candidate run summary. Dispatch records the GitHub
-actor and run as the approval. The workflow derives the exact version from
-that run's immutable release artifact and verifies that the serving version
-still matches its evaluation snapshot. For older artifacts without a snapshot,
-also enter `expected-serving-version`.
+On the first release, Foundry can serve the initial version during evaluation.
+Keep its Entra-protected URL undistributed until the stable smoke passes.
 
-The workflow verifies the source run, artifact revision, current case versions,
-live image/revision and endpoint authentication/protocols. It routes 100% of
-new sessions to the validated version, reads back the selector, then invokes a
-recorded healthy case through a fresh, unpinned session. If verification fails,
-it restores the previous fixed route when the endpoint still points to the
-attempted version. Routing records include smoke and recovery results. Existing
-sessions keep their bound Foundry version.
-
-To roll back, dispatch `rollback` with the earlier successful `release-run`,
-`expected-serving-version` and `rollback-reason`. The earlier version and its
-artifacts must still exist. A route change reuses the existing Azure OIDC login
-and agent-scoped workflow concurrency. Changed evaluation cases require new
-acceptance evidence.
+For manual rollback, dispatch `rollback` on `main` with the agent, an earlier
+successful `release-run`, `expected-serving-version`, and `rollback-reason`.
+The earlier version and its artifacts must still exist. Changed evaluation
+cases require new acceptance evidence.
 
 ## What changes for another agent
 

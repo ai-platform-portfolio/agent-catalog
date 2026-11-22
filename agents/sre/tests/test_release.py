@@ -14,7 +14,7 @@ from unittest.mock import patch
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 import yaml
 
-from evaluation.release import expected_serving_version, route, smoke, snapshot, validate_evidence
+from evaluation.release import route, smoke, validate_evidence
 from evaluation.context import check as check_context
 from evaluation.run import candidate_request, load_case, score
 from hosting.server import investigate
@@ -203,29 +203,6 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(checkpoints, {})
                 question = next(body['incident']['summary'] for body in calls if 'incident' in body)
                 self.assertNotIn(self.retrieval['answer'], question)
-
-    def test_snapshot_records_fixed_route_and_rejects_split_traffic(self):
-        summary = self.root / 'summary.md'
-        endpoint = {'version_selector': {'version_selection_rules': [
-            {'type': 'FixedRatio', 'agent_version': '6', 'traffic_percentage': 100}]}}
-        with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary), 'GITHUB_RUN_ID': '123'}), patch(
-                'evaluation.release.endpoint_state', return_value=endpoint):
-            snapshot('sre', self.root)
-            self.assertEqual(json.loads((self.root / 'serving.json').read_text()), {'version': '6'})
-            self.assertIn('release-run `123`', summary.read_text())
-            endpoint['version_selector']['version_selection_rules'][0]['traffic_percentage'] = 50
-            with self.assertRaisesRegex(ValueError, 'fixed serving route'):
-                snapshot('sre', self.root)
-
-    def test_expected_serving_version_uses_snapshot_and_supports_legacy_runs(self):
-        with patch.dict(os.environ, {'EXPECTED_SERVING_VERSION': '6'}):
-            self.assertEqual(expected_serving_version(self.root, 'promote'), '6')
-            (self.root / 'serving.json').write_text(json.dumps({'version': '5'}))
-            with self.assertRaisesRegex(ValueError, 'differs'):
-                expected_serving_version(self.root, 'promote')
-            self.assertEqual(expected_serving_version(self.root, 'rollback'), '6')
-        with patch.dict(os.environ, {'EXPECTED_SERVING_VERSION': ''}):
-            self.assertEqual(expected_serving_version(self.root, 'promote'), '5')
 
     def test_smoke_uses_the_stable_invocations_url_and_checks_identity(self):
         report = json.loads((self.root / 'healthy.json').read_text())
