@@ -32,7 +32,7 @@ def agent_url(slug):
     return f"/agent-catalog/{slug}"
 
 
-def render_page(title, heading, content, selected=None):
+def render_page(title, heading_html, content, selected=None):
     tabs = []
     for slug, agent in catalog.items():
         current = ' aria-current="page"' if slug == selected else ""
@@ -43,7 +43,7 @@ def render_page(title, heading, content, selected=None):
     current = ' aria-current="page"' if selected is None else ""
     return LAYOUT.substitute(
         title=escape(title),
-        heading=escape(heading),
+        heading=heading_html,
         catalog_current=current,
         nav_agents="".join(tabs),
         content=content,
@@ -64,16 +64,18 @@ def home():
 
 @app.get("/agent-catalog", response_class=HTMLResponse)
 def catalog_page():
-    cards = "".join(
-        f'<a class="agent-card" href="{escape(agent_url(slug))}">'
-        f'<h2>{escape(agent["name"])}</h2><p>{escape(agent["summary"])}</p></a>'
+    rows = "".join(
+        f'<a class="agent-row" href="{escape(agent_url(slug))}">'
+        f'<div><h2>{escape(agent["name"])}</h2><p>{escape(agent["summary"])}</p></div>'
+        '<span class="agent-action">View architecture</span></a>'
         for slug, agent in catalog.items()
     )
     content = (
-        '<p class="intro">Architecture and configuration of the agents in this repository.</p>'
-        f'<div class="agent-list">{cards}</div>'
+        '<p class="intro">Explore how each agent is configured, how it runs, '
+        'and which platform services it uses.</p>'
+        f'<section class="agent-list" aria-label="Agents">{rows}</section>'
     )
-    return render_page("Agent Catalog", "Agent Catalog", content)
+    return render_page("Agent Catalog", "Agent <em>Catalog</em>", content)
 
 
 @app.get("/agent-catalog/{slug}", response_class=HTMLResponse)
@@ -98,4 +100,4 @@ def agent_page(slug: str):
         f'<section class="architecture"><h2>Request flow</h2><ol class="flow">{flow}</ol></section>'
         f'<section class="architecture"><h2>Components</h2><ul class="components">{components}</ul></section>'
     )
-    return render_page(agent["name"], agent["name"], content, selected=slug)
+    return render_page(agent["name"], escape(agent["name"]), content, selected=slug)

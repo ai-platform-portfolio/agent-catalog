@@ -1,6 +1,6 @@
 {
   "name": "SRE",
-  "summary": "Investigates preview readiness failures and returns a structured diagnosis with a trace ID.",
+  "summary": "Today, the SRE agent investigates readiness failures in AKS preview environments. The goal is to investigate issues across the platform and propose fixes through GitHub pull requests.",
   "flow": [
     {"title": "Readiness event", "detail": "Argo Events watches the target preview workload."},
     {"title": "Broker Job", "detail": "A short-lived Job collects workload state and recent events in AKS."},
