@@ -2,6 +2,11 @@
 gatewayAccess:
   policy: bounded-agent
 
+# Read-only acceptance target selected by the preview workload owner.
+liveDiagnostics:
+  application: preview-environments-b65a7cfce1bb-pr-12
+  workload: api
+
 model: reasoning
 reasoning_effort: medium
 
