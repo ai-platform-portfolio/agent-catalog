@@ -14,7 +14,7 @@ from unittest.mock import patch
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 import yaml
 
-from evaluation.release import route, validate_evidence
+from evaluation.release import expected_serving_version, route, smoke, snapshot, validate_evidence
 from evaluation.context import check as check_context
 from evaluation.run import candidate_request, load_case, score
 from hosting.server import investigate
@@ -204,29 +204,87 @@ class ReleaseTests(unittest.TestCase):
                 question = next(body['incident']['summary'] for body in calls if 'incident' in body)
                 self.assertNotIn(self.retrieval['answer'], question)
 
-    def test_promotion_and_rollback_preserve_auth_and_verify_route_readback(self):
+    def test_snapshot_records_fixed_route_and_rejects_split_traffic(self):
+        summary = self.root / 'summary.md'
+        endpoint = {'version_selector': {'version_selection_rules': [
+            {'type': 'FixedRatio', 'agent_version': '6', 'traffic_percentage': 100}]}}
+        with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary), 'GITHUB_RUN_ID': '123'}), patch(
+                'evaluation.release.endpoint_state', return_value=endpoint):
+            snapshot('sre', self.root)
+            self.assertEqual(json.loads((self.root / 'serving.json').read_text()), {'version': '6'})
+            self.assertIn('release-run `123`', summary.read_text())
+            endpoint['version_selector']['version_selection_rules'][0]['traffic_percentage'] = 50
+            with self.assertRaisesRegex(ValueError, 'fixed serving route'):
+                snapshot('sre', self.root)
+
+    def test_expected_serving_version_uses_snapshot_and_supports_legacy_runs(self):
+        with patch.dict(os.environ, {'EXPECTED_SERVING_VERSION': '6'}):
+            self.assertEqual(expected_serving_version(self.root, 'promote'), '6')
+            (self.root / 'serving.json').write_text(json.dumps({'version': '5'}))
+            with self.assertRaisesRegex(ValueError, 'differs'):
+                expected_serving_version(self.root, 'promote')
+            self.assertEqual(expected_serving_version(self.root, 'rollback'), '6')
+        with patch.dict(os.environ, {'EXPECTED_SERVING_VERSION': ''}):
+            self.assertEqual(expected_serving_version(self.root, 'promote'), '5')
+
+    def test_smoke_uses_the_stable_invocations_url_and_checks_identity(self):
+        report = json.loads((self.root / 'healthy.json').read_text())
+        project = 'https://foundry.example.test/api/projects/example'
+        with patch.dict(os.environ, {'FOUNDRY_PROJECT_ENDPOINT': project}), patch(
+                'evaluation.release.hosted_request', return_value=report['result']) as invoke, patch(
+                'evaluation.release.AzureDeveloperCliCredential'), patch('evaluation.release.httpx.Client'):
+            self.assertEqual(smoke(self.release['agent'], '7', self.release)['deployment'], self.release)
+            self.assertEqual(invoke.call_args.args[0],
+                             f'{project}/agents/agent-catalog-sre/endpoint/protocols/invocations')
+            self.assertNotIn('agent_session_id', invoke.call_args.args[1])
+            with self.assertRaisesRegex(ValueError, 'does not match'):
+                smoke(self.release['agent'], '6')
+
+    def test_promotion_preserves_auth_and_smokes_or_restores_the_route(self):
         (self.root / 'azure.yaml').write_text((ROOT / 'azure.yaml').read_text())
         os.chdir(self.root)
         endpoint = {'protocol_configuration': {'invocations': {}}, 'authorization_schemes': [{'type': 'Entra'}],
                     'version_selector': {'version_selection_rules': [
                         {'type': 'FixedRatio', 'agent_version': '6', 'traffic_percentage': 100}]}}
         after = copy.deepcopy(endpoint)
-        after['version_selector'] = {'version_selection_rules': [
-            {'type': 'FixedRatio', 'agent_version': '7', 'traffic_percentage': 100}]}
+        after['version_selector']['version_selection_rules'][0]['agent_version'] = '7'
         current = {'version': '7', 'status': 'Active', 'definition': {
             'container_configuration': {'image': self.release['image']},
             'environment_variables': {'SOURCE_REVISION': self.release['source_revision']}}}
-        for observed in (after, endpoint):
-            with patch('evaluation.release.validate_evidence', return_value=self.release), patch(
-                    'evaluation.release.azd', side_effect=['', json.dumps(current), json.dumps({'agent_endpoint': endpoint}),
-                                                         '', json.dumps({'agent_endpoint': observed})]):
-                if observed == after:
-                    route('sre', '7', self.root, expected_version='6',
-                          review={'approved': True, 'url': 'https://example.test/review'})
-                else:
-                    with self.assertRaisesRegex(ValueError, 'verified'):
-                        route('sre', '7', self.root, expected_version='6',
-                          review={'approved': True, 'url': 'https://example.test/review'})
+        review = {'approved': True, 'url': 'https://example.test/review'}
+        states = ['', json.dumps(current), json.dumps({'agent_endpoint': endpoint}),
+                  '', json.dumps({'agent_endpoint': after})]
+        for outcome in ('success', 'restore', 'route-changed'):
+            with self.subTest(outcome=outcome), patch(
+                    'evaluation.release.validate_evidence', return_value=self.release):
+                responses = list(states)
+                response = {'trace_id': 'c' * 32}
+                smoke_results = [response]
+                if outcome == 'restore':
+                    responses.extend([json.dumps({'agent_endpoint': after}), '',
+                                      json.dumps({'agent_endpoint': endpoint})])
+                    smoke_results = [ValueError('smoke failed'), response]
+                if outcome == 'route-changed':
+                    other = copy.deepcopy(after)
+                    other['version_selector']['version_selection_rules'][0]['agent_version'] = '8'
+                    responses = states[:2] + [json.dumps({'agent_endpoint': other})]
+                with patch('evaluation.release.azd', side_effect=responses) as cli, patch(
+                        'evaluation.release.smoke', side_effect=smoke_results) as verify:
+                    if outcome == 'success':
+                        route('sre', '7', self.root, expected_version='6', review=review)
+                        verify.assert_called_once_with(self.release['agent'], '7', self.release)
+                    elif outcome == 'restore':
+                        with self.assertRaisesRegex(RuntimeError, 'see routing evidence'):
+                            route('sre', '7', self.root, expected_version='6', review=review)
+                        record = json.loads((self.root / 'routing.json').read_text())
+                        self.assertEqual(record['restored'], endpoint)
+                        self.assertEqual(record['restore_smoke'], response)
+                        self.assertEqual(verify.call_args.args, (self.release['agent'], '6'))
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'Serving version changed'):
+                            route('sre', '7', self.root, expected_version='6', review=review)
+                        verify.assert_not_called()
+                    self.assertEqual(cli.call_count, len(responses))
         declaration = yaml.safe_load((self.root / 'azure.yaml').read_text())['services']['sre']
         self.assertEqual(declaration['agentEndpoint']['authorizationSchemes'], [{'type': 'Entra'}])
 
