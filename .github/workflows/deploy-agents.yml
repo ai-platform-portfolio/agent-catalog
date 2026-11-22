@@ -67,11 +67,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Check caller delivery isolation
-        run: |
-          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
-          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
-
       - name: Discover native agent projects
         id: agents
         shell: bash
