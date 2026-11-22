@@ -2,6 +2,8 @@
 
 Collects bounded workload evidence and validates the SRE diagnosis.
 """
+import base64
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
@@ -87,17 +89,30 @@ class ProvidedTools:
         return json.loads(redact(json.dumps(self.evidence[name])))
 
 
+def event_time(event):
+    timestamp = ((event.get('series') or {}).get('lastObservedTime') or event.get('lastTimestamp')
+                 or event.get('eventTime') or event.get('firstTimestamp'))
+    try:
+        observed = datetime.fromisoformat(timestamp)
+    except (TypeError, ValueError):
+        return None
+    return observed if observed.tzinfo is not None else None
+
+
 class KubernetesTools:
     source = 'live_kubernetes'
     descriptions = TOOL_DESCRIPTIONS
 
-    def __init__(self, api_client, allowed_namespace, allowed_workload, metrics_client=None):
+    def __init__(self, api_client, allowed_namespace, allowed_workload, metrics_client=None, *, allowed_tools=None):
         self.api, self.metrics = api_client, metrics_client
         self.allowed_namespace, self.allowed_workload = allowed_namespace, allowed_workload
         self.state = None
-        self.names = ['workload_state', 'recent_events', 'bounded_logs']
+        available = ['workload_state', 'recent_events', 'bounded_logs']
         if metrics_client is not None:
-            self.names.append('service_metrics')
+            available.append('service_metrics')
+        if allowed_tools is not None and not set(allowed_tools) <= set(available):
+            raise ValueError('Configured live tools require unavailable collectors')
+        self.names = available if allowed_tools is None else list(allowed_tools)
 
     def _get(self, path, params=None):
         return json.loads(bounded_get(self.api, path, params))
@@ -180,12 +195,15 @@ class KubernetesTools:
             owners = {(state["deployment"]["kind"], state["deployment"]["uid"])}
             owners.update(("Pod", pod["uid"]) for pod in state["pods"])
             events = self._get(f"{prefix}/events", {"limit": 100})
-            items = sorted(
-                (event for event in events.get("items", [])
-                 if (event.get("involvedObject", {}).get("kind"),
-                     event.get("involvedObject", {}).get("uid")) in owners),
-                key=lambda e: e.get("lastTimestamp") or e.get("eventTime") or "", reverse=True,
-            )
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(minutes=5)
+            items = []
+            for event in events.get("items", []):
+                subject = event.get("involvedObject", {})
+                observed = event_time(event)
+                if (subject.get("kind"), subject.get("uid")) in owners and observed and cutoff <= observed <= now:
+                    items.append((observed, event))
+            items.sort(key=lambda item: item[0], reverse=True)
             return {"events": [
                 {
                     "reason": event.get("reason"),
@@ -193,9 +211,9 @@ class KubernetesTools:
                     "kind": event.get("involvedObject", {}).get("kind"),
                     "object": event.get("involvedObject", {}).get("name"),
                     "object_uid": event["involvedObject"]["uid"],
-                    "time": event.get("lastTimestamp") or event.get("eventTime"),
+                    "time": observed.isoformat(),
                 }
-                for event in items[:20]
+                for observed, event in items[:20]
             ], "truncated": len(items) > 20 or bool(events.get("metadata", {}).get("continue"))}
 
         if name == "bounded_logs":
@@ -220,15 +238,18 @@ class KubernetesTools:
         return {"metrics": results, "scope": namespace}
 
 
-def live_clients(credential):
+def live_clients(credential, *, include_metrics=True):
+    ca_pem = os.getenv('KUBE_CA_PEM')
+    if os.getenv('KUBE_CA_BASE64'):
+        ca_pem = base64.b64decode(os.environ['KUBE_CA_BASE64'], validate=True).decode('ascii')
     api = httpx.Client(
         base_url=https_url(os.environ['KUBE_API_URL']),
         auth=EntraAuth(credential, '6dae42f8-4368-4678-94ff-3960e28e3630/.default'),
-        verify=ssl.create_default_context(cafile=os.getenv('KUBE_CA_FILE'), cadata=os.getenv('KUBE_CA_PEM') or None),
+        verify=ssl.create_default_context(cafile=os.getenv('KUBE_CA_FILE'), cadata=ca_pem or None),
         timeout=8, follow_redirects=False,
     )
     metrics = None
-    if os.getenv('METRICS_URL'):
+    if include_metrics and os.getenv('METRICS_URL'):
         metrics = httpx.Client(base_url=https_url(os.environ['METRICS_URL']),
                                auth=EntraAuth(credential, os.environ['METRICS_TOKEN_SCOPE']),
                                timeout=8, follow_redirects=False)

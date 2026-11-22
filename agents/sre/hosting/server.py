@@ -102,11 +102,16 @@ def investigate(payload, config, client, live=None, historical_context=None):
         tools = ProvidedTools(payload['evidence'])
     elif live is not None:
         api, metrics, namespace, workload = live
-        tools = KubernetesTools(api, namespace, workload, metrics)
+        tools = KubernetesTools(api, namespace, workload, metrics,
+                                allowed_tools=['workload_state', 'recent_events'] if config.get('liveDiagnostics') else None)
     else:
         tools = ProvidedTools({})
     result, evidence = run(payload['incident'], config, client, tools, historical_context)
-    return validate_diagnosis(result, evidence, historical_context)
+    validated = validate_diagnosis(result, evidence, historical_context)
+    if tools.source == 'live_kubernetes' and 'workload_state' in evidence:
+        deployment = evidence['workload_state']['deployment']
+        validated['workload_observation'] = {key: deployment[key] for key in ('desired', 'ready', 'observed_generation')}
+    return validated
 
 
 def build_app(client=None, config=None, **host_options):
@@ -126,7 +131,7 @@ def build_app(client=None, config=None, **host_options):
         namespace, workload = os.environ['KUBE_ALLOWED_NAMESPACE'], os.environ['KUBE_ALLOWED_WORKLOAD']
         target({'namespace': namespace, 'workload': workload}, namespace, workload)
         credential = credential or DefaultAzureCredential()
-        api, metrics = live_clients(credential)
+        api, metrics = live_clients(credential, include_metrics=not config.get('liveDiagnostics'))
         live = (api, metrics, namespace, workload)
     elif backend != 'provided':
         raise ValueError('DIAGNOSTICS_BACKEND must be provided or kubernetes')

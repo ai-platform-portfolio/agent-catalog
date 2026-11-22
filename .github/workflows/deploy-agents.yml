@@ -210,6 +210,16 @@ jobs:
           resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
           cluster: ${{ vars.AKS_NAME }}
 
+      - name: Prepare live diagnostics when the target owner opts in
+        id: live-target
+        working-directory: agents/${{ matrix.agent }}
+        run: |
+          intent=$(python -c 'import json, yaml; print(json.dumps(yaml.safe_load(open("config/agent.yaml")).get("liveDiagnostics")))')
+          if [[ "$intent" != null ]]; then
+            LIVE_DIAGNOSTICS_INTENT="$intent" python -m evaluation.live configure "$RUNNER_TEMP"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy prebuilt digest with native azd
         id: candidate
         uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@38a239a1068f766437a043c8a0d3fac337e71601
@@ -267,6 +277,20 @@ jobs:
               --review "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
               --knowledge-manifest "$RUNNER_TEMP/acceptance/knowledge.json" --output "$RUNNER_TEMP/acceptance/context.json"
           fi
+
+      - name: Compare hosted evidence with the healthy target before promotion
+        if: steps.live-target.outputs.enabled == 'true'
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          SERVICE: ${{ matrix.agent }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          python -m evaluation.live observe "$RUNNER_TEMP"
+          python -m evaluation.run evaluation/cases/healthy.yaml --mode hosted --live \
+            --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
+            --target-record "$RUNNER_TEMP/live-target.json" --observed-workload "$RUNNER_TEMP/live-observation.json" \
+            --release-record "$RUNNER_TEMP/acceptance/release.json" > "$RUNNER_TEMP/acceptance/live.json"
 
       - name: Promote the passing candidate and verify the stable endpoint
         working-directory: agents/${{ matrix.agent }}
