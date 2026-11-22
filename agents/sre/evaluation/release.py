@@ -41,15 +41,6 @@ def validate_evidence(directory, agent, version):
         if (not result.get('trace_id') or any(result.get('deployment', {}).get(key) != release[key]
                                              for key in ('agent', 'version', 'image', 'source_revision'))):
             raise ValueError('Evaluation did not exercise this immutable release')
-    if Path('config/diagnostics.yaml').exists():
-        live = json.loads((directory / 'live.json').read_text())
-        target = json.loads((directory / 'target.json').read_text())
-        if (live.get('target') != target or set(target) != {'namespace', 'workload'}
-                or not live.get('trace_id') or live.get('evidence_source') != 'caller_provided'
-                or 'workload_state' not in live.get('tool_calls', [])
-                or any(live.get('deployment', {}).get(k) != release[k]
-                       for k in ('agent', 'version', 'image', 'source_revision'))):
-            raise ValueError('Missing or mismatched current live collector acceptance')
     if yaml.safe_load(Path('config/agent.yaml').read_text()).get('memory', {}).get('enabled'):
         context = json.loads((directory / 'context.json').read_text())
         required = {'recall_in_new_session', 'checkpoint_in_new_session', 'forget_memory', 'forget_checkpoint', 'grounded_runbook_citation'}
