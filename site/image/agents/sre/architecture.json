@@ -1,0 +1,18 @@
+{
+  "name": "SRE",
+  "summary": "Investigates preview readiness failures and returns a structured diagnosis with a trace ID.",
+  "flow": [
+    {"title": "Readiness event", "detail": "Argo Events watches the target preview workload."},
+    {"title": "Broker Job", "detail": "A short-lived Job collects workload state and recent events in AKS."},
+    {"title": "Foundry agent", "detail": "The broker submits evidence to a pinned, Entra-authenticated agent version."},
+    {"title": "Diagnosis", "detail": "The broker records the structured response and trace ID."}
+  ],
+  "components": [
+    {"name": "Hosted runtime", "detail": "A versioned Microsoft Foundry container serves the Invocations API. The Python adapter delegates to the shared agent runtime.", "source": "azure.yaml"},
+    {"name": "Model access", "detail": "The bounded-agent policy uses scoped reasoning, coding, and embedding connections through the shared LiteLLM gateway.", "source": "config/agent.yaml"},
+    {"name": "Monitoring and evidence", "detail": "The EventSource and Sensor launch a broker Job with its own workload identity. The broker reads the target workload and calls the hosted agent.", "source": "tools/broker.py"},
+    {"name": "Notes and knowledge", "detail": "Caller-scoped notes and checkpoints support ongoing investigations. Reviewed runbooks provide context for retrieval.", "source": "knowledge/"},
+    {"name": "Telemetry", "detail": "OpenTelemetry can export investigation traces with model and tool spans to the shared collector.", "source": "telemetry/tracing.py"},
+    {"name": "Delivery and evaluation", "detail": "The shared CI workflow builds and scans the image. Native Foundry deployment, hosted evaluations, and broker verification gate the monitoring integration.", "source": "evaluation/"}
+  ]
+}

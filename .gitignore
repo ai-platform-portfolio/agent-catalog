@@ -3,3 +3,9 @@
 __pycache__/
 *.pyc
 agents/*/evaluation/results/
+
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+backend.local.hcl

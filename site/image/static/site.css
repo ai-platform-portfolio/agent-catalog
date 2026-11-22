@@ -1,0 +1,122 @@
+:root {
+  color-scheme: dark;
+  --background: #10151d;
+  --sidebar: #151c27;
+  --surface: #181f2b;
+  --line: #303c4d;
+  --foreground: #eff3fa;
+  --secondary: #b3bfd1;
+  --accent: #8bc9ff;
+  font: 100%/1.55 system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  min-height: 100vh;
+  margin: 0;
+  color: var(--foreground);
+  background: var(--background);
+}
+
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+.skip-link {
+  position: absolute;
+  inset: .75rem auto auto .75rem;
+  z-index: 1;
+  padding: .5rem;
+  background: var(--background);
+  transform: translateY(-180%);
+}
+
+.skip-link:focus { transform: translateY(0); }
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-height: 100vh;
+  padding: 2rem 1.25rem;
+  border-right: 1px solid var(--line);
+  background: var(--sidebar);
+}
+
+.brand {
+  display: inline-block;
+  margin: 0 .75rem 2.25rem;
+  color: var(--foreground);
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.navigation, .flow, .components { margin: 0; padding: 0; list-style: none; }
+
+.nav-section, .nav-agent {
+  display: block;
+  padding: .5rem .75rem;
+  border-radius: .35rem;
+  color: var(--secondary);
+  text-decoration: none;
+}
+
+.nav-section { font-weight: 650; }
+.nav-agents { margin: .25rem 0 .75rem 1rem; border-left: 1px solid var(--line); }
+.nav-agent { margin-left: .5rem; }
+.navigation a:hover, [aria-current="page"] {
+  color: var(--foreground);
+  background: #22334a;
+}
+
+main { padding: clamp(1.5rem, 5vw, 4.5rem); }
+.content { max-width: 66rem; }
+h1, h2, h3 { margin: 0; line-height: 1.2; }
+h1 { font-size: clamp(2rem, 5vw, 3.75rem); letter-spacing: -.045em; }
+h2 { font-size: 1.45rem; letter-spacing: -.025em; }
+h3 { font-size: 1.05rem; }
+p { color: var(--secondary); }
+.intro { max-width: 41rem; margin: .9rem 0 2.5rem; font-size: 1.1rem; }
+
+.agent-list, .components, .flow { display: grid; gap: 1rem; }
+.agent-list, .components { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+.agent-card, .components li, .flow li {
+  padding: 1.3rem;
+  border: 1px solid var(--line);
+  border-radius: .65rem;
+  background: var(--surface);
+}
+
+.agent-card { color: var(--foreground); text-decoration: none; }
+.agent-card:hover { border-color: var(--accent); }
+.agent-card p, .flow p { margin: .55rem 0 0; }
+
+.architecture { margin-top: 2.5rem; }
+.architecture h2 { margin-bottom: 1rem; }
+.flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.flow li { border-top: 2px solid var(--accent); }
+.components li { display: flex; flex-direction: column; }
+.components a { margin-top: auto; overflow-wrap: anywhere; }
+
+@media (max-width: 70rem) {
+  .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 44rem) {
+  body { display: block; }
+  .sidebar {
+    position: static;
+    min-height: 0;
+    padding: 1rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { margin-bottom: .75rem; }
+}
+
+@media (max-width: 25rem) {
+  .flow { grid-template-columns: 1fr; }
+}

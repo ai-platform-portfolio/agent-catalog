@@ -461,3 +461,17 @@ Duplicate Event deliveries do not start another handoff. Use GitHub's native
 and incident branch stay stable. A changed proposal/base fails closed rather than
 silently replacing a draft. The isolation boundary is the tested Docker sandbox,
 not a claim of separate virtual machines for every trusted orchestration step.
+
+## Catalog site
+
+The site documents the agents in this repository. Add a matching `site/image/agents/<name>/architecture.json` for each agent under
+`agents/`. Its overview is packaged in the same revision as the site for production
+and PR previews.
+
+[Catalog site delivery](.github/workflows/catalog-site.yml) uses the shared Docker,
+OpenTofu, and Container Apps preview building blocks. Production runs at
+`agent-catalog.dev.michaelalinks.com` after deployment, with one warm replica.
+Same-repository PRs get HTTPS previews that scale to zero and are removed on close.
+Both use the existing portfolio hosting environment and managed identity. The
+portfolio's scheduled cleanup job also covers catalog previews. The catalog's
+OpenTofu state owns its production app and hostname records.

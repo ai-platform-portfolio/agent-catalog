@@ -1,0 +1,9 @@
+*
+!app.py
+!index.html
+!requirements.txt
+!static/
+!static/**
+!agents/
+!agents/*/
+!agents/*/architecture.json
