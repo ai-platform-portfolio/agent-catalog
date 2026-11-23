@@ -1,5 +1,6 @@
 """Caller policy: route only to a version with matching successful evaluation evidence."""
 import argparse
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import re
 import subprocess
 from urllib.parse import urlsplit
 
+from azure.ai.projects import AIProjectClient
 from azure.identity import AzureDeveloperCliCredential
 import httpx
 import yaml
@@ -140,18 +142,26 @@ def route(service, version, directory, *, expected_version, review, operation='p
     before = endpoint_state(service)
     observed = selector(before)
     # Only an initial version can pin its own previously unpinned route.
-    bootstrap = not observed and version == expected_version == '1' and operation == 'promote'
+    initial_alias = observed == [fixed_rule('@latest')]
+    bootstrap = (not observed or initial_alias) and version == expected_version == '1' and operation == 'promote'
     if observed != [fixed_rule(expected_version)] and not bootstrap:
         raise ValueError('Serving version changed since review; refusing to overwrite the route')
     endpoint = declaration['agentEndpoint']
     if contract(before) != (sorted(endpoint['protocols']), endpoint['authorizationSchemes']):
         raise ValueError('Endpoint protocols/authentication differ; review before routing')
+    if initial_alias:
+        with AzureDeveloperCliCredential(process_timeout=30) as credential, AIProjectClient(
+                endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'], credential=credential,
+                connection_timeout=5, read_timeout=15, retry_total=0) as project:
+            versions = project.agents.list_versions(release['agent'], limit=2)
+            if [item.version for item in islice(versions, 2)] != [version]:
+                raise ValueError('Initial alias requires the sole Foundry version to match the validated release')
 
     record = {'release': release, 'before': before, 'review': review, 'operation': operation,
               'reason': reason, 'expected_version': expected_version}
     try:
         if bootstrap:
-            smoke(release['agent'], version, release)
+            record['bootstrap_smoke'] = smoke(release['agent'], version, release)
         after = update_selector(service, config, endpoint, version)
         record['after'] = after
         if selector(after) != [fixed_rule(version)] or contract(after) != contract(before):
