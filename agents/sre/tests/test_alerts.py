@@ -1,11 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
-import yaml
-
-from evaluation.alerts import INTENT, request, scoped_events
+from evaluation.alerts import request, scoped_events
 from hosting.server import validate_request
 from tools.telemetry import TelemetryTools
 
@@ -32,8 +29,10 @@ class AlertsTests(unittest.TestCase):
         self.assertIsNone(request(self.alert, '100', self.now - timedelta(hours=1)))
 
     def test_registration_maps_alert_to_the_resolved_target(self):
-        intent = Path(__file__).resolve().parents[3] / INTENT
-        events = yaml.safe_load(intent.read_text())['events']
+        events = {'sensors': {'readiness': {
+            'dependencies': [{'filters': {'data': []}}],
+            'triggers': [{'template': {'http': {'payload': []}}}],
+        }}}
         scoped_events(events, 'management', 'preview-example', 'api')
         sensor = events['sensors']['readiness']
         filters = {f['path']: f['value'] for f in sensor['dependencies'][0]['filters']['data']}
