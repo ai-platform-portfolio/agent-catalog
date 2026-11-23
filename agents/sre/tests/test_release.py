@@ -18,7 +18,7 @@ import yaml
 from evaluation.release import route, smoke, validate_evidence
 from evaluation.context import check as check_context
 from evaluation.live import TELEMETRY_ROUTES_READY, configure, observe
-from evaluation.run import candidate_request, load_case, score, validate_healthy_live
+from evaluation.run import candidate_request, load_case, score, validate_fault_live, validate_healthy_live
 from hosting.server import investigate
 from runtime.agent import load_config
 from test_agent import Model, local_config
@@ -162,6 +162,22 @@ class ReleaseTests(unittest.TestCase):
                       {'workload_observation': {**observation, 'ready': 0}}):
             with self.subTest(wrong=wrong), self.assertRaises(ValueError):
                 validate_healthy_live({**answer, **wrong}, observation)
+
+    def test_live_fault_checks_workload_and_optional_source(self):
+        observation = {'desired': 1, 'available': 0, 'observed_generation': 3}
+        publication = {'repository': 'example/preview', 'revision': 'b' * 40}
+        answer = (f"Observed readiness HTTP 404. {publication['repository']} at {publication['revision']}: "
+                  "compare deploy/values.yaml and backend/app.py.")
+        result = {'evidence_source': 'live_lgtm', 'workload_observation': observation,
+                  'tool_calls': ['workload_state', 'recent_events', 'workload_provenance'],
+                  'diagnosis': {'decision': 'actionable', 'answer': answer},
+                  'source_attribution': {'verified': True, **publication}}
+        validate_fault_live(result, observation, publication)
+        with self.assertRaisesRegex(ValueError, 'independent readiness'):
+            validate_fault_live({**result, 'evidence_source': 'caller_provided'}, observation, publication)
+        with self.assertRaisesRegex(ValueError, 'verified workload source'):
+            validate_fault_live({**result, 'source_attribution': None}, observation, publication)
+
 
     def test_telemetry_waits_for_preview_and_listener_before_admission(self):
         application = {'spec': {'destination': {'name': 'in-cluster', 'namespace': 'preview-one'}}}

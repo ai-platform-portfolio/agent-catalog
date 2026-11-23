@@ -6,21 +6,32 @@ from urllib.parse import quote
 import httpx
 
 from tools.diagnostics import EntraAuth, bounded_get, https_url, redact, target
+from tools.provenance import validate_record
 
 
 class TelemetryTools:
     source = 'live_lgtm'
-    names = ['workload_state', 'recent_events']
     descriptions = {
         'workload_state': 'Read desired and available Deployment replicas and observed generation from Mimir.',
         'recent_events': 'Read matching Kubernetes readiness Events from Loki from the last five minutes.',
+        'workload_provenance': (
+            'For a readiness fault, verify the live Pod image against the publication. Compare the effective '
+            'Pod probe with the declared probe and implemented routes. Cite the full commit, repository and '
+            'source paths only if verification succeeds and the readiness Event names that Pod.'),
     }
 
-    def __init__(self, client, queries, namespace, workload):
+    def __init__(self, client, queries, namespace, workload, publication=None):
         self.client = client
         self.queries = queries
         self.namespace = namespace
         self.workload = workload
+        self.names = ['workload_state', 'recent_events']
+        self.publication = publication
+        if ('image' in queries) != (publication is not None):
+            raise ValueError('Source attribution requires both a scoped image query and a publication record')
+        if publication is not None:
+            validate_record(publication, namespace, workload)
+            self.names.append('workload_provenance')
 
     def _query(self, name):
         result = json.loads(bounded_get(self.client, f'{name}?{self.queries[name]}', limit=32768))
@@ -30,6 +41,18 @@ class TelemetryTools:
 
     def execute(self, name, incident):
         namespace, workload = target(incident, self.namespace, self.workload)
+        if name == 'workload_provenance' and self.publication is not None:
+            series = self._query('image')
+            pod = self.publication['pod']
+            if len(series) == 1:
+                metric = series[0]['metric']
+                target_labels = {'namespace': namespace, 'pod': pod['name'], 'uid': pod['uid'],
+                                 'container': pod['container'], 'image_id': self.publication['image']}
+                observed = float(series[0]['value'][1])
+                age = datetime.now(timezone.utc).timestamp() - observed
+                if all(metric.get(key) == value for key, value in target_labels.items()) and -5 <= age <= 120:
+                    return {'verified': True, **self.publication}
+            return {'verified': False, 'reason': 'No unambiguous recent Pod image matched the publication'}
         if name == 'workload_state':
             metrics = {}
             for series in self._query('replicas'):
@@ -77,7 +100,7 @@ class TelemetryTools:
         return results
 
 
-def telemetry_tools(credential, connection, namespace, workload):
+def telemetry_tools(credential, connection, namespace, workload, publication=None):
     client = httpx.Client(base_url=https_url(connection['endpoint']), follow_redirects=False,
                           auth=EntraAuth(credential, connection['scope']), timeout=8)
-    return TelemetryTools(client, connection['queries'], namespace, workload)
+    return TelemetryTools(client, connection['queries'], namespace, workload, publication)
