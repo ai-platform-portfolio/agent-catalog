@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+from shutil import which
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,7 @@ import yaml
 
 from evaluation.release import route, smoke, validate_evidence
 from evaluation.context import check as check_context
-from evaluation.live import configure, observe
+from evaluation.live import TELEMETRY_ROUTES_READY, configure, observe
 from evaluation.run import candidate_request, load_case, score, validate_healthy_live
 from hosting.server import investigate
 from runtime.agent import load_config
@@ -176,7 +177,10 @@ class ReleaseTests(unittest.TestCase):
         ])
         self.assertTrue(all(call.kwargs['ready'] for call in read.call_args_list))
         self.assertFalse((self.root / 'live-target.json').exists())
-        predicate = read.call_args_list[-1].kwargs['ready']
+        self.assertEqual(read.call_args_list[-1].kwargs['ready'], TELEMETRY_ROUTES_READY)
+
+    @unittest.skipUnless(which('jq'), 'requires the AKS Run Command jq executable')
+    def test_telemetry_routes_require_current_healthy_inventory(self):
         source = {'targetRevision': 'main', 'path': 'helm_chart/charts/resources'}
         listener = {'namespace': 'opentelemetry', 'status': 'Synced', 'group': 'gateway.networking.k8s.io',
                     'kind': 'ListenerSet', 'name': 'telemetry'}
@@ -191,7 +195,7 @@ class ReleaseTests(unittest.TestCase):
             status = {'health': {'status': health}, 'sync': {'status': 'Synced', 'comparedTo': {'source': compared}},
                       'resources': resources}
             with self.subTest(health=health, compared=compared, resources=resources):
-                result = subprocess.run(['jq', '-e', predicate], capture_output=True, text=True,
+                result = subprocess.run(['jq', '-e', TELEMETRY_ROUTES_READY], capture_output=True, text=True,
                                         input=json.dumps({'spec': {'source': source}, 'status': status}))
                 self.assertEqual(result.returncode, expected, result.stderr)
 

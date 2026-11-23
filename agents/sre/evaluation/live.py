@@ -11,6 +11,17 @@ import yaml
 from tools.diagnostics import https_url, target
 
 
+# Argo checks Accepted and Programmed on the current ListenerSet generation.
+TELEMETRY_ROUTES_READY = '''
+    .status.health.status == "Healthy" and .status.sync.status == "Synced"
+    and .spec.source != null and .status.sync.comparedTo.source == .spec.source
+    and any(.status.resources[]?; .namespace == "opentelemetry" and .status == "Synced"
+        and .group == "gateway.networking.k8s.io" and .kind == "ListenerSet" and .name == "telemetry")
+    and any(.status.resources[]?; .namespace == "opentelemetry" and .status == "Synced"
+        and .group == "gateway.envoyproxy.io" and .kind == "SecurityPolicy" and .name == "telemetry-default")
+'''
+
+
 def az_aks(*arguments, timeout=120):
     return subprocess.run(
         ['az', 'aks', *arguments, '--resource-group', os.environ['RESOURCE_GROUP'],
@@ -83,15 +94,7 @@ def configure_telemetry(directory, namespace, workload):
         (.spec.replicas // 0) > 0 and .status.observedGeneration == .metadata.generation
         and .status.updatedReplicas == .spec.replicas and .status.availableReplicas == .spec.replicas
     ''')
-    # Argo already checks Accepted and Programmed on the current ListenerSet generation.
-    read_resource('argocd', 'application.argoproj.io', 'routes', ready='''
-        .status.health.status == "Healthy" and .status.sync.status == "Synced"
-        and .spec.source != null and .status.sync.comparedTo.source == .spec.source
-        and any(.status.resources[]?; .namespace == "opentelemetry" and .status == "Synced"
-            and .group == "gateway.networking.k8s.io" and .kind == "ListenerSet" and .name == "telemetry")
-        and any(.status.resources[]?; .namespace == "opentelemetry" and .status == "Synced"
-            and .group == "gateway.envoyproxy.io" and .kind == "SecurityPolicy" and .name == "telemetry-default")
-    ''')
+    read_resource('argocd', 'application.argoproj.io', 'routes', ready=TELEMETRY_ROUTES_READY)
     defaults = read_resource('opentelemetry', 'configmap', 'telemetry-query-defaults',
                              ready='.data["values.json"] != null')
     metadata = json.loads(defaults['data']['values.json'])
