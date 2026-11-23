@@ -34,7 +34,7 @@ on:
         type: string
 
 env:
-  APPLICATION_CHART_REVISION: bbc8ad6eae460f0a77d26e918b34c9b56ff0f096 # scoped credentials with accounting recovery diagnostics
+  APPLICATION_CHART_REVISION: 90f2123cd6a2a684cc8b0c2e621e9c7ffbc17fb0 # scoped private telemetry access
 
 permissions:
   contents: read
@@ -213,6 +213,8 @@ jobs:
       - name: Prepare live diagnostics when the target owner opts in
         id: live-target
         working-directory: agents/${{ matrix.agent }}
+        env:
+          CHART_DIRECTORY: ${{ github.workspace }}/.application-chart
         run: |
           intent=$(python -c 'import json, yaml; print(json.dumps(yaml.safe_load(open("config/agent.yaml")).get("liveDiagnostics")))')
           if [[ "$intent" != null ]]; then

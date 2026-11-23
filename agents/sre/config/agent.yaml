@@ -2,6 +2,11 @@
 gatewayAccess:
   policy: bounded-agent
 
+liveDiagnostics:
+  backend: telemetry
+  application: preview-environments-b65a7cfce1bb-pr-12
+  workload: api
+
 model: reasoning
 reasoning_effort: medium
 
@@ -32,6 +37,7 @@ instructions: >-
   Return exactly decision, answer, evidence and citations as JSON. decision is actionable
   only when the relevant evidence supports a narrow diagnosis. Kubernetes readiness
   incidents require current workload state, degraded readiness and a matching event.
+  LGTM reports available replicas; use the matching readiness Event for probe evidence.
   Recorded Azure private-endpoint incidents require endpoint, DNS, Terraform
   reconciliation and module evidence; label them as recorded, never live observations.
   Otherwise abstain. answer is 20-2500 characters. evidence contains only names

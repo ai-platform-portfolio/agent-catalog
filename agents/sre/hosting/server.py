@@ -19,6 +19,7 @@ from portfolio_agent_runtime.intake import investigate_event
 from runtime.agent import load_config, model_client, run
 from telemetry.tracing import configure, shutdown as shutdown_tracing
 from tools.diagnostics import KubernetesTools, ProvidedTools, https_url, live_clients, target, validate_diagnosis
+from tools.telemetry import TelemetryTools, telemetry_tools
 
 
 class InvalidRequest(ValueError):
@@ -29,6 +30,7 @@ def validate_request(payload, live, persistent, policy):
     """Validate caller fields before crossing the model/SDK boundary."""
     shapes = {
         'investigate': ({'incident'}, {'evidence', 'investigation_id'}),
+        'verify_telemetry_boundary': (set(), set()),
         'event': ({'event_uid', 'namespace', 'workload', 'delivery_id'}, set()),
         'propose': ({'incident_id', 'base_sha', 'diagnosis', 'files'}, set()),
         'remember': ({'content', 'review'}, set()),
@@ -52,8 +54,11 @@ def validate_request(payload, live, persistent, policy):
                     raise ValueError('Replays cannot select a persistent checkpoint')
             elif live:
                 target(incident, live[2], live[3])
+        elif operation == 'verify_telemetry_boundary':
+            if live is None or not isinstance(live[0], TelemetryTools):
+                raise ValueError('Telemetry collectors are disabled')
         elif operation == 'event':
-            if not live:
+            if not live or isinstance(live[0], TelemetryTools):
                 raise ValueError('Event intake requires live collectors')
             target(payload, live[2], live[3])
             identifier(payload['event_uid'])
@@ -102,15 +107,17 @@ def investigate(payload, config, client, live=None, historical_context=None):
         tools = ProvidedTools(payload['evidence'])
     elif live is not None:
         api, metrics, namespace, workload = live
-        tools = KubernetesTools(api, namespace, workload, metrics,
-                                allowed_tools=['workload_state', 'recent_events'] if config.get('liveDiagnostics') else None)
+        tools = api if isinstance(api, TelemetryTools) else KubernetesTools(
+            api, namespace, workload, metrics,
+            allowed_tools=['workload_state', 'recent_events'] if config.get('liveDiagnostics') else None)
     else:
         tools = ProvidedTools({})
     result, evidence = run(payload['incident'], config, client, tools, historical_context)
     validated = validate_diagnosis(result, evidence, historical_context)
-    if tools.source == 'live_kubernetes' and 'workload_state' in evidence:
+    if tools.source in {'live_kubernetes', 'live_lgtm'} and 'workload_state' in evidence:
         deployment = evidence['workload_state']['deployment']
-        validated['workload_observation'] = {key: deployment[key] for key in ('desired', 'ready', 'observed_generation')}
+        replica_field = 'available' if tools.source == 'live_lgtm' else 'ready'
+        validated['workload_observation'] = {key: deployment[key] for key in ('desired', replica_field, 'observed_generation')}
     return validated
 
 
@@ -127,14 +134,18 @@ def build_app(client=None, config=None, **host_options):
     backend = os.getenv('DIAGNOSTICS_BACKEND', 'provided')
     live = project = None
     context_settings = {}
-    if backend == 'kubernetes':
+    if backend in {'kubernetes', 'telemetry'}:
         namespace, workload = os.environ['KUBE_ALLOWED_NAMESPACE'], os.environ['KUBE_ALLOWED_WORKLOAD']
         target({'namespace': namespace, 'workload': workload}, namespace, workload)
         credential = credential or DefaultAzureCredential()
-        api, metrics = live_clients(credential, include_metrics=not config.get('liveDiagnostics'))
+        if backend == 'telemetry':
+            api = telemetry_tools(credential, json.loads(os.environ['TELEMETRY_CONNECTION']), namespace, workload)
+            metrics = None
+        else:
+            api, metrics = live_clients(credential, include_metrics=not config.get('liveDiagnostics'))
         live = (api, metrics, namespace, workload)
     elif backend != 'provided':
-        raise ValueError('DIAGNOSTICS_BACKEND must be provided or kubernetes')
+        raise ValueError('Unsupported diagnostics backend')
     if config.get('memory', {}).get('enabled'):
         from azure.ai.projects import AIProjectClient
         credential = credential or DefaultAzureCredential()
@@ -174,6 +185,9 @@ def build_app(client=None, config=None, **host_options):
                 except (ValueError, UnicodeDecodeError):
                     raise InvalidRequest('Invalid JSON') from None
                 operation = validate_request(payload, live, project is not None, policy)
+                if operation == 'verify_telemetry_boundary':
+                    return JSONResponse({'denials': await asyncio.to_thread(live[0].verify_boundary),
+                                         'version': os.getenv('FOUNDRY_AGENT_VERSION')})
                 if operation == 'event':
                     result = await investigate_event(payload, investigation, agent=os.environ['FOUNDRY_AGENT_NAME'],
                                                      namespace=live[2], workload=live[3])
@@ -215,7 +229,7 @@ def build_app(client=None, config=None, **host_options):
         if project is not None:
             project.close()
         if live:
-            live[0].close()
+            (live[0].client if isinstance(live[0], TelemetryTools) else live[0]).close()
             if live[1] is not None:
                 live[1].close()
         if credential is not None:

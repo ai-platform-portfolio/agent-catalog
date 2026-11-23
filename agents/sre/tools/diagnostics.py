@@ -287,7 +287,8 @@ def validate_diagnosis(result, evidence, historical_context=None):
         if not {'workload_state', 'recent_events'} <= set(diagnosis['evidence']):
             raise ValueError('Actionable diagnosis requires workload and event evidence')
         state = evidence['workload_state'].get('deployment', {})
-        desired, ready = state.get('desired'), state.get('ready')
+        replica_field = 'available' if result.get('evidence_source') == 'live_lgtm' else 'ready'
+        desired, ready = state.get('desired'), state.get(replica_field)
         events = evidence['recent_events'].get('events', [])
         if (type(desired) is not int or desired < 1 or type(ready) is not int or ready >= desired
                 or not any(event.get('reason') == 'Unhealthy' and
