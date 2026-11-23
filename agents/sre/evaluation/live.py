@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from shlex import quote
 import subprocess
 
 import yaml
@@ -10,20 +11,37 @@ import yaml
 from tools.diagnostics import https_url, target
 
 
-def az_aks(*arguments):
+def az_aks(*arguments, timeout=120):
     return subprocess.run(
         ['az', 'aks', *arguments, '--resource-group', os.environ['RESOURCE_GROUP'],
          '--name', os.environ['CLUSTER'], '--only-show-errors'],
-        check=True, capture_output=True, text=True, timeout=120,
+        check=True, capture_output=True, text=True, timeout=timeout,
     ).stdout
 
 
-def read_resource(namespace, resource, name):
+def read_resource(namespace, resource, name, *, ready=None):
     # Names are validated DNS labels before any shell command is constructed.
     target({'namespace': namespace, 'workload': name}, namespace, name)
-    result = json.loads(az_aks('command', 'invoke', '--command',
-                               f'kubectl -n {namespace} get {resource} {name} -o json', '-o', 'json'))
+    command = f'kubectl -n {namespace} get {resource} {name} -o json'
+    if ready is not None:
+        # Keep the bounded wait inside one AKS command instead of starting a pod for each read.
+        command = f'''
+deadline=$(($(date +%s) + 180))
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  observed=$({command} --ignore-not-found --request-timeout=5s) || exit 1
+  if printf '%s' "$observed" | jq -e {quote(ready)} >/dev/null; then
+    printf '%s\n' "$observed"
+    exit 0
+  fi
+  sleep 3
+done
+exit 1
+'''
+    result = json.loads(az_aks('command', 'invoke', '--command', command, '-o', 'json',
+                               timeout=250 if ready is not None else 120))
     if result['exitCode'] != 0:
+        if ready is not None:
+            raise ValueError(f'Readiness check failed for {namespace}/{resource}/{name}')
         raise ValueError(f'Independent {resource} read failed')
     return json.loads(result['logs'])
 
@@ -32,13 +50,14 @@ def configure(intent, directory):
     if (not isinstance(intent, dict) or not {'application', 'workload'} <= set(intent) <= {'application', 'workload', 'backend'}
             or intent.get('backend', 'kubernetes') not in {'kubernetes', 'telemetry'}):
         raise ValueError('Live diagnostics needs an Argo Application and Deployment name')
-    application = read_resource('argocd', 'application.argoproj.io', intent['application'])
+    backend = intent.get('backend', 'kubernetes')
+    application = read_resource('argocd', 'application.argoproj.io', intent['application'],
+                                ready='.kind == "Application"' if backend == 'telemetry' else None)
     destination = application['spec']['destination']
     if destination.get('server') != 'https://kubernetes.default.svc' and destination.get('name') != 'in-cluster':
         raise ValueError('Live diagnostics target must be deployed to the selected AKS cluster')
     namespace, workload = destination['namespace'], intent['workload']
     target({'namespace': namespace, 'workload': workload}, namespace, workload)
-    backend = intent.get('backend', 'kubernetes')
     settings = {
         'AGENT_DIAGNOSTICS_BACKEND': backend,
         'KUBE_ALLOWED_NAMESPACE': namespace,
@@ -59,7 +78,17 @@ def configure(intent, directory):
 
 
 def configure_telemetry(directory, namespace, workload):
-    defaults = read_resource('opentelemetry', 'configmap', 'telemetry-query-defaults')
+    read_resource(namespace, 'deployment', workload, ready='''
+        (.spec.replicas // 0) > 0 and .status.observedGeneration == .metadata.generation
+        and .status.updatedReplicas == .spec.replicas and .status.availableReplicas == .spec.replicas
+    ''')
+    read_resource('opentelemetry', 'listenerset.gateway.networking.k8s.io', 'telemetry', ready='''
+        .metadata.generation as $generation |
+        any(.status.conditions[]?;
+            .type == "Programmed" and .status == "True" and .observedGeneration == $generation)
+    ''')
+    defaults = read_resource('opentelemetry', 'configmap', 'telemetry-query-defaults',
+                             ready='.data["values.json"] != null')
     metadata = json.loads(defaults['data']['values.json'])
     values_path = directory / ('gateway-' + os.environ['SERVICE']) / 'values.json'
     values = json.loads(values_path.read_text())

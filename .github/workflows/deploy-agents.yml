@@ -200,7 +200,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Resolve chart-owned public model connections
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@f1770dafd67b63ae8938d431b461b21a5fc22763
         with:
           operation: configure
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -247,7 +247,7 @@ jobs:
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
 
       - name: Reconcile credentials for the actual native principal
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@81dd0d22c1cfd96f6e5b8b3083b5758b7da087e7
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@f1770dafd67b63ae8938d431b461b21a5fc22763
         with:
           operation: apply
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
