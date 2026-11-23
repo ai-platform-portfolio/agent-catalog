@@ -34,7 +34,7 @@ on:
         type: string
 
 env:
-  APPLICATION_CHART_REVISION: 90f2123cd6a2a684cc8b0c2e621e9c7ffbc17fb0 # scoped private telemetry access
+  APPLICATION_CHART_REVISION: 3213f8d4cc7566d120c6b1af95cfa5927069af42 # scoped Loki readiness Events
 
 permissions:
   contents: read
