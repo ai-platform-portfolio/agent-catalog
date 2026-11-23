@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 import yaml
@@ -327,6 +327,58 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual(cli.call_count, len(responses))
         declaration = yaml.safe_load((self.root / 'azure.yaml').read_text())['services']['sre']
         self.assertEqual(declaration['agentEndpoint']['authorizationSchemes'], [{'type': 'Entra'}])
+
+    def test_first_promotion_pins_only_the_sole_evaluated_version(self):
+        (self.root / 'azure.yaml').write_text((ROOT / 'azure.yaml').read_text())
+        os.chdir(self.root)
+        release = {**self.release, 'version': '1'}
+        alias = {'type': 'FixedRatio', 'agent_version': '@latest', 'traffic_percentage': 100}
+        fixed = {**alias, 'agent_version': '1'}
+        review = {'approved': True, 'url': 'https://example.test/review'}
+        current = {'version': '1', 'status': 'Active', 'definition': {
+            'container_configuration': {'image': release['image']},
+            'environment_variables': {'SOURCE_REVISION': release['source_revision']}}}
+        endpoint = {'protocol_configuration': {'invocations': {}}, 'authorization_schemes': [{'type': 'Entra'}]}
+        cases = (
+            ([alias], ['1'], 'promote', False, None),
+            ([alias], ['1', '2'], 'promote', False, 'sole'),
+            ([alias, fixed], ['1'], 'promote', False, 'Serving version changed'),
+            ([alias], ['1'], 'rollback', False, 'Serving version changed'),
+            ([alias], ['1'], 'promote', True, 'Route change failed'),
+        )
+        for rules, versions, operation, smoke_fails, error in cases:
+            with self.subTest(rules=rules, versions=versions, operation=operation, smoke_fails=smoke_fails):
+                before = {**endpoint, 'version_selector': {'version_selection_rules': rules}}
+                after = {**endpoint, 'version_selector': {'version_selection_rules': [fixed]}}
+                response = {'trace_id': 'c' * 32}
+                with patch.dict(os.environ, {'FOUNDRY_PROJECT_ENDPOINT': 'https://example.test'}), patch(
+                        'evaluation.release.validate_evidence', return_value=release), patch(
+                        'evaluation.release.azd', side_effect=['', json.dumps(current)]), patch(
+                        'evaluation.release.endpoint_state', return_value=before), patch(
+                        'evaluation.release.AIProjectClient') as client, patch(
+                        'evaluation.release.AzureDeveloperCliCredential'), patch(
+                        'evaluation.release.update_selector', return_value=after) as update, patch(
+                        'evaluation.release.smoke', return_value=response,
+                        side_effect=ValueError('Wrong immutable release') if smoke_fails else None) as verify:
+                    listing = client.return_value.__enter__.return_value.agents.list_versions
+                    listing.return_value = iter(Mock(version=version) for version in versions)
+                    args = ('sre', '1', self.root)
+                    kwargs = dict(expected_version='1', review=review, operation=operation, reason='Reviewed rollback')
+                    if error:
+                        with self.assertRaisesRegex((ValueError, RuntimeError), error):
+                            route(*args, **kwargs)
+                        update.assert_not_called()
+                        self.assertEqual(verify.call_count, int(smoke_fails))
+                    else:
+                        route(*args, **kwargs)
+                        listing.assert_called_once_with(release['agent'], limit=2)
+                        update.assert_called_once()
+                        self.assertEqual(update.call_args.args[-1], '1')
+                        self.assertEqual(verify.call_count, 2)
+                        record = json.loads((self.root / 'routing.json').read_text())
+                        self.assertEqual(record['before'], before)
+                        self.assertEqual(record['after'], after)
+                        self.assertEqual(record['bootstrap_smoke'], response)
 
     def test_native_smoke_selects_numeric_version_and_hides_failed_raw_response(self):
         response = subprocess.CompletedProcess([], 0, 'HTTP/2.0 200 OK\nHeader: value\n\n{"ok":true}', '')
