@@ -1068,8 +1068,8 @@ packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 portfolio-agent-observability @ https://github.com/ai-platform-portfolio/application-library/releases/download/observability-v0.1.0/portfolio_agent_observability-0.1.0-py3-none-any.whl \
     --hash=sha256:56deb0686191ef756c815539a5d963309d13cf4a22200a9ac6eb17ef5a3755fe
-portfolio-agent-runtime[foundry] @ https://github.com/ai-platform-portfolio/application-library/releases/download/agent-runtime-v0.1.8/portfolio_agent_runtime-0.1.8-py3-none-any.whl \
-    --hash=sha256:75a5d21807438b47c4a468944d834f64f479b070a5d9b04832b9b6123596ba6e
+portfolio-agent-runtime[foundry] @ https://github.com/ai-platform-portfolio/application-library/releases/download/agent-runtime-v0.1.9/portfolio_agent_runtime-0.1.9-py3-none-any.whl \
+    --hash=sha256:012138b0203613b61eba634264dccb029ad439b6b4ef9d5df0ac3a7b1c3c8ea1
 priority==2.0.0 \
     --hash=sha256:6f8eefce5f3ad59baf2c080a664037bb4725cd0a790d53d59ab4059288faf6aa \
     --hash=sha256:c965d54f1b8d0d0b19479db3924c7c36cf672dbf2aec92d43fbdaf4492ba18c0
