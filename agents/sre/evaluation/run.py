@@ -1,6 +1,7 @@
 """Offline datasets and online hosted evaluations; grader data never enters runtime input."""
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -62,7 +63,8 @@ def candidate_request(service, environment, version, payload):
 
 
 def validate_healthy_live(result, observation):
-    if (observation.get('desired', 0) <= 0 or observation.get('ready') != observation['desired']
+    field = 'available' if result.get('evidence_source') == 'live_lgtm' else 'ready'
+    if (observation.get('desired', 0) <= 0 or observation.get(field) != observation['desired']
             or observation.get('observed_generation') is None):
         raise ValueError('Live acceptance needs an independently observed healthy workload')
     calls = result.get('tool_calls', [])
@@ -90,6 +92,8 @@ def main():
         parser.error('Hosted mode needs exactly one of --endpoint or --service; --service needs environment/version')
     if args.observed_workload and not (args.live and args.target_record):
         parser.error('Independent observation requires live mode and a target record')
+    if args.live and os.getenv('AGENT_DIAGNOSTICS_BACKEND') == 'telemetry' and not (args.service and args.observed_workload):
+        parser.error('Telemetry acceptance requires a pinned candidate and an independent observation')
     case, payload = load_case(args.case)
     target = None
     if args.target_record:
@@ -121,6 +125,13 @@ def main():
             if args.observed_workload:
                 validate_healthy_live(result, json.loads(args.observed_workload.read_text()))
             report = score(case, result, config)
+            if args.live and result.get('evidence_source') == 'live_lgtm':
+                denied = candidate_request(args.service, args.environment, args.expected_version,
+                                           {'operation': 'verify_telemetry_boundary'})
+                if denied != {'version': args.expected_version, 'denials': {'replicas': 403, 'events': 403}}:
+                    raise ValueError('Private telemetry policy did not deny both out-of-scope requests')
+                report['telemetry_boundary'] = denied['denials']
+                report['workload_observation'] = result['workload_observation']
             report['evaluation_trace_id'] = f'{span.get_span_context().trace_id:032x}'
             report['mode'] = args.mode + ('_live' if args.live else '_recorded')
             if target:
@@ -144,7 +155,8 @@ def evaluate(args, payload, config):
             else:
                 with httpx.Client(follow_redirects=False) as session:
                     result = hosted_request(args.endpoint, payload, credential, session)
-            expected_source = 'live_kubernetes' if args.live else 'caller_provided'
+            backend = os.getenv('AGENT_DIAGNOSTICS_BACKEND')
+            expected_source = ('live_lgtm' if backend == 'telemetry' else 'live_kubernetes') if args.live else 'caller_provided'
             if result.get('evidence_source') != expected_source:
                 raise ValueError('Hosted backend does not match the evaluation evidence mode')
     return result

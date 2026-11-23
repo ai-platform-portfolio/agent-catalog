@@ -16,8 +16,43 @@ from portfolio_agent_runtime.handoff import prepare
 from runtime.agent import load_config, model_client, run
 from hosting.server import build_app, investigate, validate_request
 from tools.diagnostics import EntraAuth, KubernetesTools, ProvidedTools, bounded_get, validate_diagnosis
+from tools.telemetry import TelemetryTools
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class PrivateTelemetryTests(unittest.TestCase):
+    def test_fixed_queries_and_negative_scope_checks(self):
+        namespace = 'preview-approved'
+        query = 'query=namespace%3D%22preview-approved%22'
+        calls = []
+
+        def upstream(request):
+            calls.append(request)
+            encoded = request.url.query.decode()
+            if 'telemetry-boundary-probe' in encoded:
+                return httpx.Response(403)
+            self.assertEqual(encoded, query)
+            if request.url.path.endswith('/events'):
+                series = []
+            else:
+                series = [
+                    {'metric': {'namespace': namespace, 'deployment': 'api',
+                                '__name__': 'kube_deployment_' + suffix}, 'value': [0, '1']}
+                    for suffix in ('spec_replicas', 'status_replicas_available', 'status_observed_generation')
+                ]
+            return httpx.Response(200, json={'status': 'success', 'data': {'result': series}})
+
+        with httpx.Client(base_url='https://private.example.test/query/agent', transport=httpx.MockTransport(upstream)) as client:
+            tools = TelemetryTools(client, {'replicas': query, 'events': query}, namespace, 'api')
+            with self.assertRaises(ValueError):
+                tools.execute('recent_events', {'namespace': 'other', 'workload': 'api'})
+            self.assertFalse(calls)
+            intent = {'namespace': namespace, 'workload': 'api'}
+            self.assertEqual(tools.execute('workload_state', intent)['deployment']['available'], 1)
+            self.assertEqual(tools.execute('recent_events', intent)['events'], [])
+            self.assertEqual(tools.verify_boundary(), {'replicas': 403, 'events': 403})
+            self.assertEqual([call.url.path for call in calls], ['/query/agent/replicas', '/query/agent/events'] * 2)
 
 
 def local_config():
