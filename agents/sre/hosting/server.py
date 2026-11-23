@@ -118,6 +118,11 @@ def investigate(payload, config, client, live=None, historical_context=None):
         deployment = evidence['workload_state']['deployment']
         replica_field = 'available' if tools.source == 'live_lgtm' else 'ready'
         validated['workload_observation'] = {key: deployment[key] for key in ('desired', replica_field, 'observed_generation')}
+    provenance = evidence.get('workload_provenance', {})
+    if tools.source == 'live_lgtm' and provenance.get('verified') is True:
+        events = evidence.get('recent_events', {}).get('events', [])
+        if any(event['object'] == provenance['pod']['name'] for event in events):
+            validated['source_attribution'] = provenance
     return validated
 
 
@@ -139,7 +144,9 @@ def build_app(client=None, config=None, **host_options):
         target({'namespace': namespace, 'workload': workload}, namespace, workload)
         credential = credential or DefaultAzureCredential()
         if backend == 'telemetry':
-            api = telemetry_tools(credential, json.loads(os.environ['TELEMETRY_CONNECTION']), namespace, workload)
+            publication = json.loads(os.getenv('WORKLOAD_PROVENANCE') or 'null')
+            api = telemetry_tools(credential, json.loads(os.environ['TELEMETRY_CONNECTION']),
+                                  namespace, workload, publication)
             metrics = None
         else:
             api, metrics = live_clients(credential, include_metrics=not config.get('liveDiagnostics'))

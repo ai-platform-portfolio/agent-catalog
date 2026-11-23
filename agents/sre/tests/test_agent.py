@@ -55,6 +55,35 @@ class PrivateTelemetryTests(unittest.TestCase):
             self.assertEqual([call.url.path for call in calls], ['/query/agent/replicas', '/query/agent/events'] * 2)
 
 
+    def test_source_requires_the_exact_recent_publication_image(self):
+        namespace, workload = 'isolated-pr', 'api'
+        pod = {'namespace': namespace, 'workload': workload, 'name': 'api-abc-xyz',
+               'uid': '00000000-1111-2222-3333-444444444444', 'container': 'api', 'probe': '/missing'}
+        image = 'registry.example/preview/api@sha256:' + 'a' * 64
+        publication = {'repository': 'example/preview', 'revision': 'a' * 40, 'run_id': '1',
+                       'image': image, 'pod': pod, 'files': {'deploy/values.yaml': '/ready', 'backend/app.py': ['/ready']}}
+        labels = {'namespace': namespace, 'pod': pod['name'], 'uid': pod['uid'],
+                  'container': pod['container'], 'image_id': image}
+        observed = [{'metric': labels, 'value': [0, str(time.time())]}]
+
+        def upstream(request):
+            return httpx.Response(200, json={'status': 'success', 'data': {'result': observed}})
+
+        with httpx.Client(base_url='https://private.example.test/query/agent', transport=httpx.MockTransport(upstream)) as client:
+            tools = TelemetryTools(client, {'image': 'fixed-query'}, namespace, workload, publication)
+            self.assertEqual(tools.execute('workload_provenance', pod), {'verified': True, **publication})
+            for changes in ({'uid': 'wrong'}, {'image_id': image.replace('a' * 64, 'b' * 64)}):
+                with self.subTest(changes=changes):
+                    observed[0]['metric'] = {**labels, **changes}
+                    self.assertFalse(tools.execute('workload_provenance', pod)['verified'])
+            observed[0] = {'metric': labels, 'value': [0, str(time.time() - 121)]}
+            self.assertFalse(tools.execute('workload_provenance', pod)['verified'])
+            observed.clear()
+            self.assertFalse(tools.execute('workload_provenance', pod)['verified'])
+            with self.assertRaisesRegex(ValueError, 'scoped image query'):
+                TelemetryTools(client, {}, namespace, workload, publication)
+
+
 def local_config():
     config = load_config()
     config['memory']['enabled'] = False

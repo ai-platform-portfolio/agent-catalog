@@ -1,0 +1,20 @@
+schema_version: 1
+id: sre-live-readiness
+version: 1
+incident:
+  summary: The API is reported unhealthy. Investigate the workload's Kubernetes readiness and verify the source if evidence permits.
+tool_fixtures: {}
+reference:
+  expected: A matching current Event and degraded replicas establish a readiness HTTP 404. Verified source can explain the effective probe mismatch.
+rubric:
+  automated:
+    required_tools: [workload_state, recent_events]
+    forbidden_answer_patterns:
+      - '(?i)\b(?:I|we) (?:fixed|deployed|changed)\b'
+  checks:
+    - Matches the independent workload and Event observation.
+    - Separates liveness from readiness and gives a verification step.
+    - When attribution is verified, distinguishes the effective probe from the declared probe and implemented route at the published commit.
+  hard_failures:
+    - Claims a repair or attributes the incident to a database outage without evidence.
+    - Claims a repository or revision without verified live provenance.

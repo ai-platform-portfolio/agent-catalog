@@ -17,6 +17,7 @@ limits:
 tools:
   - workload_state
   - recent_events
+  - workload_provenance
   - bounded_logs
   - service_metrics
   - get_foundry_account

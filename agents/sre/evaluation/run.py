@@ -73,6 +73,23 @@ def validate_healthy_live(result, observation):
         raise ValueError('Live acceptance disagrees with the healthy workload or required tool calls')
 
 
+def validate_fault_live(result, observation, publication):
+    diagnosis = result.get('diagnosis', {})
+    answer = diagnosis.get('answer', '')
+    if (result.get('evidence_source') != 'live_lgtm'
+            or observation.get('desired', 0) <= 0 or observation.get('available') != 0
+            or observation.get('observed_generation') is None
+            or result.get('workload_observation') != observation
+            or not {'workload_state', 'recent_events'} <= set(result.get('tool_calls', []))
+            or diagnosis.get('decision') != 'actionable' or not re.search(r'\b404\b', answer)):
+        raise ValueError('Live fault evidence disagrees with the independent readiness observation')
+    if publication is not None:
+        references = (publication['repository'], publication['revision'], 'deploy/values.yaml', 'backend/app.py')
+        if (result.get('source_attribution') != {'verified': True, **publication}
+                or not all(reference in answer for reference in references)):
+            raise ValueError('Live diagnosis did not cite its verified workload source')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('case', type=Path)
@@ -84,7 +101,9 @@ def main():
     parser.add_argument('--environment', help='Existing azd environment for --service')
     parser.add_argument('--release-record', type=Path, help='Require the returned deployment to match this image/source record')
     parser.add_argument('--target-record', type=Path, help='Resolved namespace/workload for live acceptance')
-    parser.add_argument('--observed-workload', type=Path, help='Independently read healthy workload state')
+    parser.add_argument('--observed-workload', type=Path, help='Independently read workload state')
+    parser.add_argument('--live-fault', action='store_true', help='Grade an independently observed readiness HTTP 404')
+    parser.add_argument('--publication', type=Path, help='Expected verified source record for --live-fault')
     args = parser.parse_args()
     if (args.live and args.mode != 'hosted'
             or args.mode == 'hosted' and bool(args.endpoint) == bool(args.service)
@@ -94,6 +113,12 @@ def main():
         parser.error('Independent observation requires live mode and a target record')
     if args.live and os.getenv('AGENT_DIAGNOSTICS_BACKEND') == 'telemetry' and not (args.service and args.observed_workload):
         parser.error('Telemetry acceptance requires a pinned candidate and an independent observation')
+    if args.live_fault and not (args.live and args.service and args.target_record and args.observed_workload
+                                and args.release_record and os.getenv('AGENT_DIAGNOSTICS_BACKEND') == 'telemetry'):
+        parser.error('A live fault requires the pinned telemetry candidate and independent target and observation records')
+    if args.publication and not args.live_fault:
+        parser.error('--publication is for --live-fault')
+    publication = json.loads(args.publication.read_text()) if args.publication else None
     case, payload = load_case(args.case)
     target = None
     if args.target_record:
@@ -102,9 +127,10 @@ def main():
                 or any(not re.fullmatch(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?', v) for v in target.values())):
             raise ValueError('A live target needs an explicit namespace and workload')
         payload['incident'].update(target)
-        payload['incident']['summary'] = (
-            'Check the configured target\'s current Kubernetes readiness using workload_state and recent_events. '
-            'Separate observed workload health from application availability; do not claim a fix or recovery.')
+        if not args.live_fault:
+            payload['incident']['summary'] = (
+                'Check the configured target\'s current Kubernetes readiness using workload_state and recent_events. '
+                'Separate observed workload health from application availability; do not claim a fix or recovery.')
     config = load_config()
     configure()
     try:
@@ -123,13 +149,20 @@ def main():
             if not result.get('trace_id'):
                 raise ValueError('Investigation did not produce a trace identifier')
             if args.observed_workload:
-                validate_healthy_live(result, json.loads(args.observed_workload.read_text()))
+                observation = json.loads(args.observed_workload.read_text())
+                if args.live_fault:
+                    validate_fault_live(result, observation, publication)
+                else:
+                    validate_healthy_live(result, observation)
             report = score(case, result, config)
             if args.live and result.get('evidence_source') == 'live_lgtm':
                 denied = candidate_request(args.service, args.environment, args.expected_version,
                                            {'operation': 'verify_telemetry_boundary'})
-                if denied != {'version': args.expected_version, 'denials': {'replicas': 403, 'events': 403}}:
-                    raise ValueError('Private telemetry policy did not deny both out-of-scope requests')
+                expected_denials = {'replicas': 403, 'events': 403}
+                if publication is not None:
+                    expected_denials['image'] = 403
+                if denied != {'version': args.expected_version, 'denials': expected_denials}:
+                    raise ValueError('Private telemetry policy did not deny the expected out-of-scope requests')
                 report['telemetry_boundary'] = denied['denials']
                 report['workload_observation'] = result['workload_observation']
             report['evaluation_trace_id'] = f'{span.get_span_context().trace_id:032x}'

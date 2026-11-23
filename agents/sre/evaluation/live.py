@@ -9,6 +9,7 @@ import subprocess
 import yaml
 
 from tools.diagnostics import https_url, target
+from tools.provenance import validate_record
 
 
 # Argo checks Accepted and Programmed on the current ListenerSet generation.
@@ -76,6 +77,10 @@ def configure(intent, directory):
         'KUBE_ALLOWED_WORKLOAD': workload,
     }
     if backend == 'telemetry':
+        read_resource(namespace, 'deployment', workload, ready='''
+            (.spec.replicas // 0) > 0 and .status.observedGeneration == .metadata.generation
+            and .status.updatedReplicas == .spec.replicas and .status.availableReplicas == .spec.replicas
+        ''')
         settings['TELEMETRY_CONNECTION'] = configure_telemetry(directory, namespace, workload)
     else:
         profile = yaml.safe_load(az_aks('get-credentials', '--format', 'exec', '--file', '-'))
@@ -89,11 +94,11 @@ def configure(intent, directory):
         env.writelines(f'{key}={value}\n' for key, value in settings.items())
 
 
-def configure_telemetry(directory, namespace, workload):
-    read_resource(namespace, 'deployment', workload, ready='''
-        (.spec.replicas // 0) > 0 and .status.observedGeneration == .metadata.generation
-        and .status.updatedReplicas == .spec.replicas and .status.availableReplicas == .spec.replicas
-    ''')
+def configure_telemetry(directory, namespace, workload, publication=None):
+    target({'namespace': namespace, 'workload': workload}, namespace, workload)
+    if publication is not None:
+        validate_record(publication, namespace, workload)
+
     read_resource('argocd', 'application.argoproj.io', 'routes', ready=TELEMETRY_ROUTES_READY)
     defaults = read_resource('opentelemetry', 'configmap', 'telemetry-query-defaults',
                              ready='.data["values.json"] != null')
@@ -102,6 +107,10 @@ def configure_telemetry(directory, namespace, workload):
     values = json.loads(values_path.read_text())
     values['platform']['telemetry'] = dict(metadata, namespace=namespace, workload=workload,
                                            tenantId=values['platform']['azure']['tenantId'])
+    if publication is not None:
+        values['platform']['telemetry']['pod'] = {
+            field: publication['pod'][field] for field in ('name', 'uid', 'container')
+        }
     values_path.write_text(json.dumps(values))
     rendered = subprocess.run(
         ['helm', 'template', values['name'], os.environ['CHART_DIRECTORY'], '-f', str(values_path),
@@ -126,10 +135,22 @@ def observe(directory):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['configure', 'observe'])
+    parser.add_argument('operation', choices=['configure', 'configure-target', 'observe'])
     parser.add_argument('directory', type=Path)
+    parser.add_argument('--namespace')
+    parser.add_argument('--workload')
+    parser.add_argument('--publication', type=Path)
     args = parser.parse_args()
     if args.operation == 'configure':
         configure(json.loads(os.environ['LIVE_DIAGNOSTICS_INTENT']), args.directory)
+    elif args.operation == 'configure-target':
+        if not args.namespace or not args.workload:
+            parser.error('configure-target requires --namespace and --workload')
+        publication = json.loads(args.publication.read_text()) if args.publication else None
+        connection = configure_telemetry(args.directory, args.namespace, args.workload, publication)
+        (args.directory / 'live-target.json').write_text(json.dumps({
+            'namespace': args.namespace, 'workload': args.workload,
+        }))
+        print(connection)
     else:
         observe(args.directory)

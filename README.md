@@ -321,6 +321,29 @@ including matrix/job overhead and per-agent artifact handoff. Do not change that
 composition without a concrete simplification. Signing and ordered deletion remain
 separate delivery work. Removing a directory does not delete its hosted agent.
 
+## Controlled live readiness evaluation
+
+Use a separately named, version-pinned Foundry candidate and a disposable
+Deployment. Prepare its normal gateway registration, then use
+`evaluation.live configure-target` with the fixture namespace and Deployment.
+It renders the private telemetry connection and writes `live-target.json`.
+Set `AGENT_DIAGNOSTICS_BACKEND=telemetry`, the two `KUBE_ALLOWED_*` settings,
+and the rendered `TELEMETRY_CONNECTION` for that candidate.
+
+Collect the control and fault observations with `evaluation.live observe`.
+Evaluate `evaluation/cases/healthy.yaml` for the control and
+`evaluation/readiness-live.yaml --live-fault` for the fault. Use the pinned
+service, environment, version, release record and the independently observed
+workload. The evaluator sends only the incident and target.
+
+For source attribution, run `evaluation.provenance REPOSITORY RUN_ID POD_JSON
+--workload api --container api` using the approved fault Pod read. Pass the
+resulting JSON as `--publication` to `configure-target` and the fault evaluator.
+Set the same JSON as the candidate's native `WORKLOAD_PROVENANCE` environment
+value before deployment. The Pod UID and exact image digest must match a recent
+Mimir sample, and the Event must name that Pod before the response reports
+verified source. Recollect the record if the Pod is replaced.
+
 ## Telemetry and evaluation traceability
 
 The optional **repository** variable `AGENT_TRACES_ENDPOINT` supplies the exact
