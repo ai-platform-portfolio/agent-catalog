@@ -162,6 +162,21 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(wrong=wrong), self.assertRaises(ValueError):
                 validate_healthy_live({**answer, **wrong}, observation)
 
+    def test_telemetry_waits_for_preview_and_listener_before_admission(self):
+        application = {'spec': {'destination': {'name': 'in-cluster', 'namespace': 'preview-one'}}}
+        intent = {'application': 'preview-release', 'workload': 'api', 'backend': 'telemetry'}
+        with patch('evaluation.live.read_resource',
+                   side_effect=[application, {}, ValueError('listener not programmed')]) as read, \
+             self.assertRaisesRegex(ValueError, 'listener not programmed'):
+            configure(intent, self.root)
+        self.assertEqual([call.args for call in read.call_args_list], [
+            ('argocd', 'application.argoproj.io', 'preview-release'),
+            ('preview-one', 'deployment', 'api'),
+            ('opentelemetry', 'listenerset.gateway.networking.k8s.io', 'telemetry'),
+        ])
+        self.assertTrue(all(call.kwargs['ready'] for call in read.call_args_list))
+        self.assertFalse((self.root / 'live-target.json').exists())
+
     def test_evidence_rejects_wrong_version_revision_and_stale_case(self):
         self.assertEqual(validate_evidence(self.root, self.release['agent'], '7'), self.release)
         with self.assertRaises(ValueError):
