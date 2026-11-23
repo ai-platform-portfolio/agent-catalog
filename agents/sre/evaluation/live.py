@@ -11,6 +11,17 @@ import yaml
 from tools.diagnostics import https_url, target
 
 
+# Argo checks Accepted and Programmed on the current ListenerSet generation.
+TELEMETRY_ROUTES_READY = '''
+    .status.health.status == "Healthy" and .status.sync.status == "Synced"
+    and .spec.source != null and .status.sync.comparedTo.source == .spec.source
+    and any(.status.resources[]?; .namespace == "opentelemetry" and .status == "Synced"
+        and .group == "gateway.networking.k8s.io" and .kind == "ListenerSet" and .name == "telemetry")
+    and any(.status.resources[]?; .namespace == "opentelemetry" and .status == "Synced"
+        and .group == "gateway.envoyproxy.io" and .kind == "SecurityPolicy" and .name == "telemetry-default")
+'''
+
+
 def az_aks(*arguments, timeout=120):
     return subprocess.run(
         ['az', 'aks', *arguments, '--resource-group', os.environ['RESOURCE_GROUP'],
@@ -28,7 +39,7 @@ def read_resource(namespace, resource, name, *, ready=None):
         command = f'''
 deadline=$(($(date +%s) + 180))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  observed=$({command} --ignore-not-found --request-timeout=5s) || exit 1
+  observed=$({command} --ignore-not-found --request-timeout=5s) || exit 2
   if printf '%s' "$observed" | jq -e {quote(ready)} >/dev/null; then
     printf '%s\n' "$observed"
     exit 0
@@ -41,7 +52,8 @@ exit 1
                                timeout=250 if ready is not None else 120))
     if result['exitCode'] != 0:
         if ready is not None:
-            raise ValueError(f'Readiness check failed for {namespace}/{resource}/{name}')
+            reason = 'Kubernetes read failed' if result['exitCode'] == 2 else 'Readiness wait failed'
+            raise ValueError(f'{reason} for {namespace}/{resource}/{name}')
         raise ValueError(f'Independent {resource} read failed')
     return json.loads(result['logs'])
 
@@ -82,11 +94,7 @@ def configure_telemetry(directory, namespace, workload):
         (.spec.replicas // 0) > 0 and .status.observedGeneration == .metadata.generation
         and .status.updatedReplicas == .spec.replicas and .status.availableReplicas == .spec.replicas
     ''')
-    read_resource('opentelemetry', 'listenerset.gateway.networking.k8s.io', 'telemetry', ready='''
-        .metadata.generation as $generation |
-        any(.status.conditions[]?;
-            .type == "Programmed" and .status == "True" and .observedGeneration == $generation)
-    ''')
+    read_resource('argocd', 'application.argoproj.io', 'routes', ready=TELEMETRY_ROUTES_READY)
     defaults = read_resource('opentelemetry', 'configmap', 'telemetry-query-defaults',
                              ready='.data["values.json"] != null')
     metadata = json.loads(defaults['data']['values.json'])
