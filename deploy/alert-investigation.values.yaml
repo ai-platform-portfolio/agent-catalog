@@ -1,0 +1,58 @@
+name: agent-catalog-sre-alerts
+namespace: agent-catalog-sre-alerts
+
+events:
+  githubTokens:
+    dispatch:
+      repository: ai-platform-portfolio/agent-catalog
+      permissions: {contents: write}
+
+  sensors:
+    readiness:
+      dependencies:
+        - name: firing
+          eventSourceName: grafana-alerts
+          eventName: alert
+          filters:
+            data:
+              - {path: body.status, type: string, value: ['^firing$']}
+              - {path: 'body.alerts.0.status', type: string, value: ['^firing$']}
+              - {path: 'body.alerts.0.labels.alertname', type: string, value: ['^Repeated Kubernetes readiness failures$']}
+              - {path: 'body.alerts.#', type: number, value: ['1']}
+      triggers:
+        - template:
+            name: dispatch-readiness
+            http:
+              url: https://api.github.com/repos/ai-platform-portfolio/agent-catalog/dispatches
+              method: POST
+              headers:
+                Accept: application/vnd.github+json
+                Content-Type: application/json
+              secureHeaders:
+                - name: Authorization
+                  valueFrom:
+                    secretKeyRef: {name: dispatch, key: authorization}
+              payload:
+                - src:
+                    dependencyName: firing
+                    value: sre-readiness-alert
+                  dest: event_type
+                - src:
+                    dependencyName: firing
+                    dataKey: body.alerts.0.labels.cluster
+                  dest: client_payload.cluster
+                - src:
+                    dependencyName: firing
+                    dataKey: body.alerts.0.labels.namespace
+                  dest: client_payload.namespace
+                - src:
+                    dependencyName: firing
+                    dataKey: body.alerts.0.fingerprint
+                  dest: client_payload.fingerprint
+                - src:
+                    dependencyName: firing
+                    dataKey: body.alerts.0.startsAt
+                  dest: client_payload.starts_at
+          policy:
+            status: {allow: [204]}
+          retryStrategy: {steps: 3, duration: 5s, factor: 2}

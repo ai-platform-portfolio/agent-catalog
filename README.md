@@ -475,10 +475,17 @@ Publication credentials are minted only after validation succeeds. Trusted host
 steps never execute target code. One bounded artifact retains the audit records. Repeated publication cannot
 overwrite another proposal or reopen a closed incident PR.
 
-Grafana evaluates readiness alerts from Kubernetes Events collected by the
-platform's existing Alloy collector into Loki. Open the alert in Grafana,
-collect relevant Events and pod logs for the incident window, and submit a
-bounded evidence snapshot to the Foundry Invocations endpoint on demand.
+Grafana evaluates readiness alerts from Kubernetes Events collected by Alloy
+into Loki. After the SRE release verifies the stable endpoint, it registers
+the chart-rendered subscription for its configured live telemetry target.
+The private shared Argo Events receiver delivers firing alerts for that target
+to `alert-investigate.yml`, which invokes the serving version and retains an
+incident and trace receipt. Grafana's fingerprint and start time distinguish
+a repeat delivery from a new firing. Foundry reuses the investigation result
+for repeats within the 24-hour intake window.
+
+For a manual replay, collect relevant Events and pod logs for the incident
+window and submit a bounded evidence snapshot to Foundry Invocations.
 Use the `workload_state` and `recent_events` evidence shapes in
 [`evaluation/cases/readiness-fault.yaml`](agents/sre/evaluation/cases/readiness-fault.yaml).
 Include workload readiness counts from Mimir or the approved Kubernetes API

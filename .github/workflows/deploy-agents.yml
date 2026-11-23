@@ -312,6 +312,16 @@ jobs:
           python -m evaluation.release promote "$SERVICE" "$RUNNER_TEMP/acceptance"
           echo "Stable endpoint verified on v$(jq -r .smoke.deployment.version "$RUNNER_TEMP/acceptance/routing.json")." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Register readiness alerts after the stable SRE smoke
+        if: matrix.agent == 'sre' && steps.live-target.outputs.enabled == 'true'
+        working-directory: agents/sre
+        env:
+          CHART_DIRECTORY: ${{ github.workspace }}/.application-chart
+        run: |
+          if [[ "$AGENT_DIAGNOSTICS_BACKEND" == telemetry ]]; then
+            python -m evaluation.alerts register "$RUNNER_TEMP"
+          fi
+
       - name: Retain evaluation and routing evidence
         if: always() && steps.candidate.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

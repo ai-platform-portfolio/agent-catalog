@@ -1,0 +1,72 @@
+name: Investigate a Grafana readiness alert
+
+on:
+  repository_dispatch:
+    types: [sre-readiness-alert]
+
+permissions:
+  contents: read
+
+jobs:
+  investigate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate bounded alert identity
+        id: alert
+        working-directory: agents/sre
+        run: python3 -m evaluation.alerts request "$RUNNER_TEMP/alert-request.json" >> "$GITHUB_OUTPUT"
+
+      - name: Investigate on the fixed serving version
+        id: investigation
+        if: steps.alert.outputs.incident != ''
+        uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-invoke@9a3d7be65f6daa6da7652e8611bae3968b6a0e43
+        with:
+          service: sre
+          environment: ${{ github.event.repository.name }}-sre
+          working-directory: agents/sre
+          request-file: ${{ runner.temp }}/alert-request.json
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          location: ${{ vars.AZURE_LOCATION }}
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+
+      - name: Verify and record incident receipt
+        if: steps.alert.outputs.incident != ''
+        env:
+          RESPONSE: ${{ steps.investigation.outputs.response }}
+          VERSION: ${{ steps.investigation.outputs.version }}
+          INCIDENT: ${{ steps.alert.outputs.incident }}
+        run: |
+          jq -e --arg version "$VERSION" '
+            if .status == "in_progress" then .duplicate == true
+            else
+              (.trace_id | test("^[a-f0-9]{32}$")) and
+              (.duplicate == true or .deployment.version == $version)
+            end
+          ' "$RESPONSE" > /dev/null
+          jq --arg incident "$INCIDENT" '
+            {incident: $incident, duplicate: (.duplicate // false), status: (.status // "complete"),
+             trace_id, version: .deployment.version}
+          ' "$RESPONSE" > "$RUNNER_TEMP/alert-receipt.json"
+          { echo '### Grafana readiness investigation'; echo; echo '```json';
+            cat "$RUNNER_TEMP/alert-receipt.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain incident receipt
+        if: steps.alert.outputs.incident != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: alert-investigation
+          path: ${{ runner.temp }}/alert-receipt.json
+          if-no-files-found: error

@@ -32,6 +32,7 @@ def validate_request(payload, live, persistent, policy):
         'investigate': ({'incident'}, {'evidence', 'investigation_id'}),
         'verify_telemetry_boundary': (set(), set()),
         'event': ({'event_uid', 'namespace', 'workload', 'delivery_id'}, set()),
+        'alert': ({'event_uid', 'namespace', 'workload', 'delivery_id'}, set()),
         'propose': ({'incident_id', 'base_sha', 'diagnosis', 'files'}, set()),
         'remember': ({'content', 'review'}, set()),
         'recall': ({'query'}, set()),
@@ -57,9 +58,9 @@ def validate_request(payload, live, persistent, policy):
         elif operation == 'verify_telemetry_boundary':
             if live is None or not isinstance(live[0], TelemetryTools):
                 raise ValueError('Telemetry collectors are disabled')
-        elif operation == 'event':
-            if not live or isinstance(live[0], TelemetryTools):
-                raise ValueError('Event intake requires live collectors')
+        elif operation in {'event', 'alert'}:
+            if not live or isinstance(live[0], TelemetryTools) != (operation == 'alert'):
+                raise ValueError('Intake does not match the live collectors')
             target(payload, live[2], live[3])
             identifier(payload['event_uid'])
             identifier(payload['delivery_id'])
@@ -195,7 +196,7 @@ def build_app(client=None, config=None, **host_options):
                 if operation == 'verify_telemetry_boundary':
                     return JSONResponse({'denials': await asyncio.to_thread(live[0].verify_boundary),
                                          'version': os.getenv('FOUNDRY_AGENT_VERSION')})
-                if operation == 'event':
+                if operation in {'event', 'alert'}:
                     result = await investigate_event(payload, investigation, agent=os.environ['FOUNDRY_AGENT_NAME'],
                                                      namespace=live[2], workload=live[3])
                 elif operation == 'propose':
