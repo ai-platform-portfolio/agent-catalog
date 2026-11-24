@@ -201,7 +201,7 @@ jobs:
 
       - name: Resolve chart-owned public model connections
         id: gateway
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@d31656341602806fb9ef209232f44c42c7e5ca72
         with:
           operation: configure
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -261,7 +261,7 @@ jobs:
       - name: Publish the native principal and wait for Argo credentials
         env:
           GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@d31656341602806fb9ef209232f44c42c7e5ca72
         with:
           operation: candidate
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -329,7 +329,7 @@ jobs:
       - name: Publish verified serving readiness and wait for Argo
         env:
           GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@d31656341602806fb9ef209232f44c42c7e5ca72
         with:
           operation: serving
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
