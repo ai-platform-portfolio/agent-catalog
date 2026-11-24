@@ -1,1 +1,1 @@
-{"agent": "sre", "alerts": true, "principalId": "bc6c10c4-a68a-4ba3-b565-3b0798239112", "sourceRevision": "778d132042b86e8779265b3800120f4a1a12414a", "telemetry": {"namespace": "preview-environments-b65a7cfce1bb-pr-12", "workload": "api"}, "version": "4"}
+{"agent": "sre", "alerts": false, "principalId": "bc6c10c4-a68a-4ba3-b565-3b0798239112", "sourceRevision": "112caef612ea41f8ff7e5e07e1b8e8387dcf45bb", "telemetry": {"namespace": "preview-environments-b65a7cfce1bb-pr-12", "workload": "api"}, "version": "5"}
