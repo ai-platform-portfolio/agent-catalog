@@ -276,6 +276,12 @@ def validate_diagnosis(result, evidence, historical_context=None):
         raise ValueError('Historical citations must identify supplied sources only')
     if diagnosis['decision'] == 'actionable':
         if result.get('evidence_source') == 'live_arm':
+            if 'read_azure_activity' in diagnosis['evidence']:
+                activity = evidence['read_azure_activity']
+                if activity.get('status') != 200 or not any(
+                        event.get('error_code') for event in activity.get('failed_operations', [])):
+                    raise ValueError('Actionable Activity Log diagnosis requires a failed operation with an error code')
+                return result
             account = evidence.get('read_foundry_account', {})
             if ('read_foundry_account' not in diagnosis['evidence']
                     or account.get('status') != 200

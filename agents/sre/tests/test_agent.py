@@ -120,6 +120,49 @@ class Model:
 
 
 class AgentTests(unittest.TestCase):
+    def test_deleted_azure_resource_uses_activity_log_for_the_failed_operation(self):
+        base = ('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/example'
+                '/providers/Microsoft.CognitiveServices/accounts/')
+        resource = base + 'previous'
+        event_time = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=1)
+        timestamp = event_time.isoformat().replace('+00:00', 'Z')
+        tools = AzureTools(Mock(), base + 'current/projects/project',
+                           'https://example.vault.azure.net/secrets/sre-azure-read-check',
+                           'https://example.blob.core.windows.net/sre-azure-acceptance/read-check.txt')
+        self.addCleanup(tools.client.close)
+        incident = {'summary': 'Why did the deletion fail?', 'azure_resource_id': resource, 'azure_event_time': timestamp}
+        failed = {
+            'resourceId': resource, 'eventTimestamp': timestamp,
+            'operationName': {'value': 'Microsoft.CognitiveServices/accounts/delete'},
+            'status': {'value': 'Failed'}, 'subStatus': {'value': 'Conflict'},
+            'properties': {'statusMessage': json.dumps({'error': {
+                'code': 'CannotDeleteResource',
+                'message': "Cannot delete resource while nested resources exist. "
+                           "'Microsoft.CognitiveServices/accounts/previous/projects/management'. Private detail.",
+            }})},
+        }
+
+        def upstream(request):
+            self.assertTrue(request.url.path.endswith('/providers/Microsoft.Insights/eventtypes/management/values'))
+            self.assertIn(f"and resourceUri eq '{resource}'", request.url.params['$filter'])
+            return httpx.Response(200, json={'value': [
+                failed, {**failed, 'resourceId': base + 'other'}, {**failed, 'status': {'value': 'Succeeded'}},
+            ]})
+
+        with httpx.Client(base_url='https://management.azure.com', transport=httpx.MockTransport(upstream)) as tools.client:
+            self.assertEqual(validate_request({'incident': incident}, None, False, {}, tools), 'investigate')
+            for invalid in (resource.replace('11111111-1111', '22222222-2222', 1), resource + "'"):
+                with self.assertRaises(ValueError):
+                    validate_request({'incident': {**incident, 'azure_resource_id': invalid}}, None, False, {}, tools)
+            result = investigate({'incident': incident}, load_config(),
+                                 Model(['read_azure_activity'], 'actionable'), azure=tools)
+        self.assertEqual(result['azure_activity']['failed_operations'], [{
+            'operation': 'Microsoft.CognitiveServices/accounts/delete', 'timestamp': timestamp,
+            'status': 'Failed', 'sub_status': 'Conflict', 'error_code': 'CannotDeleteResource',
+            'blocker': 'nested_resources_exist', 'nested_resources': [resource + '/projects/management'],
+        }])
+        self.assertNotIn('Private detail', json.dumps(result))
+
     def test_live_azure_reads_only_the_approved_account_and_returns_bounded_evidence(self):
         resource = ('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/example'
                     '/providers/Microsoft.CognitiveServices/accounts/foundry')
