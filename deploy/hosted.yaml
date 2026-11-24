@@ -1,0 +1,5 @@
+hostedAgents:
+  sre:
+    config: agents/sre/config/agent.yaml
+    alerts:
+      readiness: true
