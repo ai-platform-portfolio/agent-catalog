@@ -247,6 +247,42 @@ jobs:
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
 
+      - name: Ensure SRE runtime subscription read access
+        if: matrix.agent == 'sre'
+        env:
+          RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          from uuid import NAMESPACE_URL, UUID, uuid5
+
+          record = json.loads(Path(os.environ["RELEASE_RECORD"]).read_text())
+          principal = str(UUID(record["instance_principal_id"]))
+          scope = f'/subscriptions/{UUID(os.environ["AZURE_SUBSCRIPTION_ID"])}'
+          roles = {
+              "Reader": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+              "Key Vault Secrets User": "4633458b-17de-408a-b874-0445c86b69e6",
+              "Storage Blob Data Reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+          }
+          for role_name, role_id in roles.items():
+              assignment = str(uuid5(NAMESPACE_URL, f"{scope}/{principal}/{role_id}"))
+              result = subprocess.run([
+                  "az", "role", "assignment", "create", "--name", assignment,
+                  "--assignee-object-id", principal, "--assignee-principal-type", "ServicePrincipal",
+                  "--role", role_id, "--scope", scope, "--output", "json", "--only-show-errors",
+              ], capture_output=True, text=True, timeout=90)
+              if result.returncode:
+                  raise SystemExit(f"Could not assign subscription {role_name} to the SRE runtime.")
+              actual = json.loads(result.stdout)
+              if (actual["principalId"].lower() != principal or actual["scope"].lower() != scope
+                      or actual["roleDefinitionId"].rsplit("/", 1)[-1].lower() != role_id):
+                  raise SystemExit(f"Subscription {role_name} assignment readback differs.")
+          PY
+
       - name: Mint the existing repository-scoped Git publication token
         id: delivery-token
         uses: ai-platform-portfolio/ops-shared/.github/actions/github-app-token@52c206abbccce14939c12bb7b556cdecc284df15
