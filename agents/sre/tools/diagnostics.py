@@ -275,6 +275,13 @@ def validate_diagnosis(result, evidence, historical_context=None):
             or len(citations) != len(set(citations)) or not set(citations) <= allowed):
         raise ValueError('Historical citations must identify supplied sources only')
     if diagnosis['decision'] == 'actionable':
+        if result.get('evidence_source') == 'live_arm':
+            account = evidence.get('read_foundry_account', {})
+            if ('read_foundry_account' not in diagnosis['evidence']
+                    or account.get('status') != 200
+                    or 'Disconnected' not in account.get('connection_states', [])):
+                raise ValueError('Actionable ARM diagnosis requires an observed disconnection')
+            return result
         azure_tools = {'get_foundry_account', 'get_model_deployment', 'get_private_endpoint',
                        'get_private_dns', 'get_terraform_reconciliation', 'inspect_foundry_module'}
         if result.get('evidence_source') == 'caller_provided' and set(evidence) <= azure_tools:
