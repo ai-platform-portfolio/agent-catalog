@@ -1,4 +1,5 @@
 """Read bounded ARM evidence and verify designated data-plane fixtures."""
+from datetime import datetime, timedelta, timezone
 import json
 import re
 
@@ -10,6 +11,10 @@ from tools.diagnostics import EntraAuth, bounded_get
 
 ARM_URL = 'https://management.azure.com'
 ACCOUNT_API_VERSION = '2025-06-01'
+RESOURCE_ID = (
+    r'/subscriptions/([0-9a-f-]{36})/resourceGroups/[a-z0-9_.()-]{1,90}'
+    r'/providers/[a-z0-9.]+(?:/[a-z0-9_.()-]+/[a-z0-9_.()@-]+)+'
+)
 ACCOUNT_ID = (
     r'/subscriptions/[0-9a-f-]{36}/resourceGroups/[a-z0-9_.()-]{1,90}'
     r'/providers/Microsoft\.CognitiveServices/accounts/[a-z0-9][a-z0-9_.-]{1,63}'
@@ -24,6 +29,86 @@ def foundry_account(project_id):
     return project_id.rsplit('/', 2)[0]
 
 
+def activity_window(event_time):
+    now = datetime.now(timezone.utc)
+    if event_time is None:
+        return now - timedelta(days=2), now
+    if not isinstance(event_time, str) or len(event_time) > 40:
+        raise ValueError('Azure event time must be an ISO 8601 timestamp with a time zone')
+    point = datetime.fromisoformat(event_time)
+    if point.tzinfo is None or not now - timedelta(days=90) <= point <= now:
+        raise ValueError('Azure event time must identify a time within Activity Log retention')
+    point = point.astimezone(timezone.utc)
+    radius = timedelta(minutes=15)
+    return point - radius, min(point + radius, now)
+
+
+def failed_activity(row, resource):
+    operation = (row.get('operationName') or {}).get('value', '')
+    if ((row.get('resourceId') or '').lower() != resource.lower()
+            or (row.get('status') or {}).get('value') != 'Failed'
+            or not re.fullmatch(r'[a-z0-9.]+(?:/[a-z0-9_.-]+)+', operation, re.I)):
+        return None
+    timestamp = row.get('eventTimestamp', '')
+    if not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,7})?Z', timestamp):
+        return None
+
+    details = (row.get('properties') or {}).get('statusMessage') or '{}'
+    try:
+        error = json.loads(details).get('error') or {}
+    except (ValueError, AttributeError, TypeError):
+        error = {}
+    code = error.get('code', '') if isinstance(error, dict) else ''
+    event = {'operation': operation, 'timestamp': timestamp, 'status': 'Failed'}
+    if isinstance(code, str) and re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_.-]{0,95}', code):
+        event['error_code'] = code
+    sub_status = (row.get('subStatus') or {}).get('value', '')
+    if isinstance(sub_status, str) and re.fullmatch(r'[a-zA-Z0-9_ -]{1,50}', sub_status):
+        event['sub_status'] = sub_status
+    correlation = row.get('correlationId') or ''
+    if re.fullmatch(r'[0-9a-f-]{36}', correlation, re.I):
+        event['correlation_id'] = correlation
+
+    if code == 'CannotDeleteResource':
+        message = error.get('message') or ''
+        if isinstance(message, str) and 'Cannot delete resource while nested resources exist' in message:
+            parent = re.escape(re.split('/providers/', resource, maxsplit=1, flags=re.I)[1])
+            children = re.findall(r"'" + parent + r"((?:/[a-z0-9_.()-]+/[a-z0-9_.()@-]+)+)'", message, re.I)
+            event['blocker'] = 'nested_resources_exist'
+            event['nested_resources'] = [resource + child for child in children[:3]]
+    return event
+
+
+class ActivityLogTools:
+    source = 'live_arm'
+    names = ('read_azure_activity',)
+    descriptions = {'read_azure_activity': 'Read failed Azure Activity Log events for this resource and time window.'}
+
+    def __init__(self, client, subscription_scope, resource, window):
+        self.client, self.resource, self.window = client, resource, window
+        self.path = subscription_scope + '/providers/Microsoft.Insights/eventtypes/management/values'
+
+    def execute(self, name, incident):
+        if name not in self.names or incident.get('azure_resource_id') != self.resource:
+            raise ValueError('Unexpected Activity Log tool target')
+        start, end = (point.isoformat(timespec='seconds').replace('+00:00', 'Z') for point in self.window)
+        query = {
+            'api-version': '2015-04-01',
+            '$filter': f"eventTimestamp ge '{start}' and eventTimestamp le '{end}' and resourceUri eq '{self.resource}'",
+            '$select': 'resourceId,eventTimestamp,operationName,status,subStatus,correlationId,properties',
+        }
+        try:
+            payload = json.loads(bounded_get(self.client, self.path, query))
+        except httpx.HTTPStatusError as error:
+            return {'status': error.response.status_code, 'available': False}
+        except httpx.RequestError:
+            return {'available': False}
+        failed = [event for row in payload['value'] if (event := failed_activity(row, self.resource))]
+        failed.sort(key=lambda event: event['timestamp'], reverse=True)
+        return {'status': 200, 'available': True, 'window_start': start, 'window_end': end,
+                'failed_operations': failed[:5], 'truncated': len(failed) > 5 or bool(payload.get('nextLink'))}
+
+
 class AzureTools:
     source = 'live_arm'
     names = ('read_foundry_account',)
@@ -31,6 +116,7 @@ class AzureTools:
 
     def __init__(self, credential, project_id, secret_url, blob_url):
         self.account_id = foundry_account(project_id)
+        self.subscription_scope = '/'.join(self.account_id.split('/', 3)[:3])
         if not re.fullmatch(SECRET_URL, secret_url) or not re.fullmatch(BLOB_URL, blob_url):
             raise ValueError('Expected designated Azure read acceptance fixture URLs')
         self.credential, self.secret_url, self.blob_url = credential, secret_url, blob_url
@@ -39,13 +125,24 @@ class AzureTools:
 
     def validate_target(self, incident):
         resource_id = incident.get('azure_resource_id')
-        if (set(incident) != {'summary', 'azure_resource_id'} or not isinstance(resource_id, str)
-                or resource_id.lower() != self.account_id.lower()):
-            raise ValueError('Azure investigation requires the configured Foundry account ID')
+        if (set(incident) - {'summary', 'azure_resource_id', 'azure_event_time'} or not isinstance(resource_id, str)
+                or len(resource_id) > 512 or not re.fullmatch(RESOURCE_ID, resource_id, re.I)
+                or not resource_id.lower().startswith(self.subscription_scope.lower() + '/')):
+            raise ValueError('Azure investigation requires a resource ID in the configured subscription')
+        if 'azure_event_time' in incident:
+            activity_window(incident['azure_event_time'])
+
+    def for_incident(self, incident):
+        self.validate_target(incident)
+        resource = incident['azure_resource_id']
+        if resource.lower() == self.account_id.lower() and 'azure_event_time' not in incident:
+            return self
+        return ActivityLogTools(self.client, self.subscription_scope, resource,
+                                activity_window(incident.get('azure_event_time')))
 
     def execute(self, name, incident):
         self.validate_target(incident)
-        if name not in self.names:
+        if name not in self.names or incident['azure_resource_id'].lower() != self.account_id.lower():
             raise ValueError('Unknown ARM evidence tool')
         try:
             payload = json.loads(bounded_get(self.client, self.account_id, {'api-version': ACCOUNT_API_VERSION}))

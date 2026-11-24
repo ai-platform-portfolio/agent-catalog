@@ -116,7 +116,7 @@ def investigate(payload, config, client, live=None, historical_context=None, azu
     if 'evidence' in payload:
         tools = ProvidedTools(payload['evidence'])
     elif 'azure_resource_id' in payload['incident'] and azure is not None:
-        tools = azure
+        tools = azure.for_incident(payload['incident'])
     elif live is not None:
         api, metrics, namespace, workload = live
         tools = api if isinstance(api, TelemetryTools) else KubernetesTools(
@@ -128,6 +128,8 @@ def investigate(payload, config, client, live=None, historical_context=None, azu
     validated = validate_diagnosis(result, evidence, historical_context)
     if tools.source == 'live_arm' and 'read_foundry_account' in evidence:
         validated['azure_observation'] = evidence['read_foundry_account']
+    if tools.source == 'live_arm' and 'read_azure_activity' in evidence:
+        validated['azure_activity'] = evidence['read_azure_activity']
     if tools.source in {'live_kubernetes', 'live_lgtm'} and 'workload_state' in evidence:
         deployment = evidence['workload_state']['deployment']
         replica_field = 'available' if tools.source == 'live_lgtm' else 'ready'

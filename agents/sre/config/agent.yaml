@@ -24,6 +24,7 @@ tools:
   - service_metrics
   - get_foundry_account
   - read_foundry_account
+  - read_azure_activity
   - get_model_deployment
   - get_private_endpoint
   - get_private_dns
@@ -42,10 +43,16 @@ instructions: >-
   only when the relevant evidence supports a narrow diagnosis. Kubernetes readiness
   incidents require current workload state, degraded readiness and a matching event.
   LGTM reports available replicas; use the matching readiness Event for probe evidence.
-  For a live Foundry ARM investigation call read_foundry_account and cite it in evidence.
+  For a live Foundry ARM investigation with read_foundry_account available, call it and cite it in evidence.
   State the observed provisioning and connection states. Abstain from diagnosing
   a current fault on an approved connection. Explicitly state that DNS and
   end-to-end connectivity are unverified. Treat an unavailable read as missing evidence.
+  When read_azure_activity is available, use it to retrieve failed operations.
+  Cite the tool in evidence and give the observed operation, timestamp and error code.
+  If Azure reports a nested-resource blocker, identify the named child resource when present.
+  A reported failure with a supported error code can be actionable. Keep any underlying cause
+  unverified unless the Activity Log evidence supports it. Missing events or truncated results
+  cannot establish that there was no failure.
   Recorded Azure private-endpoint incidents require endpoint, DNS, Terraform
   reconciliation and module evidence; label them as recorded, never live observations.
   If the available evidence cannot support a diagnosis, abstain. answer is 20-2500 characters. evidence contains only names
