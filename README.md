@@ -476,8 +476,8 @@ steps never execute target code. One bounded artifact retains the audit records.
 overwrite another proposal or reopen a closed incident PR.
 
 Grafana evaluates readiness alerts from Kubernetes Events collected by Alloy
-into Loki. Catalog publishes candidate identity and verified serving readiness
-to Git. The platform ApplicationSet and shared chart reconcile credentials
+into Loki. Agents opt in with `readinessAlerts: true` in `config/agent.yaml`.
+Catalog publishes candidate identity and verified serving readiness to Git. The platform ApplicationSet and shared chart reconcile credentials
 before hosted evaluation and enable the scoped subscription after the serving
 smoke.
 The private shared Argo Events receiver delivers firing alerts for that target

@@ -5,10 +5,10 @@ name: Deploy catalog agents
 
 on:
   pull_request:
-    paths: ['agents/**', 'deploy/hosted.yaml', '.github/workflows/**', '!.github/workflows/catalog-site.yml']
+    paths: ['agents/**', '.github/workflows/**', '!.github/workflows/catalog-site.yml']
   push:
     branches: [main]
-    paths: ['agents/**', 'deploy/hosted.yaml', '.github/workflows/**', '!.github/workflows/catalog-site.yml']
+    paths: ['agents/**', '.github/workflows/**', '!.github/workflows/catalog-site.yml']
   workflow_dispatch:
     inputs:
       operation:
@@ -201,7 +201,7 @@ jobs:
 
       - name: Resolve chart-owned public model connections
         id: gateway
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@a83588c40da132fb83f08768f90151740df5d08f
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
         with:
           operation: configure
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -261,7 +261,7 @@ jobs:
       - name: Publish the native principal and wait for Argo credentials
         env:
           GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@a83588c40da132fb83f08768f90151740df5d08f
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
         with:
           operation: candidate
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -329,7 +329,7 @@ jobs:
       - name: Publish verified serving readiness and wait for Argo
         env:
           GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@a83588c40da132fb83f08768f90151740df5d08f
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
         with:
           operation: serving
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
