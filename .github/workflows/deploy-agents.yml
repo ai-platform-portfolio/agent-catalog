@@ -251,7 +251,7 @@ jobs:
         id: delivery-token
         uses: ai-platform-portfolio/ops-shared/.github/actions/github-app-token@52c206abbccce14939c12bb7b556cdecc284df15
         with:
-          vault-name: ${{ secrets.FUNCTION_VAULT }}
+          vault-name: ${{ fromJSON(secrets.FUNCTION_VAULT).name }}
           key-name: ai-platform-clusters-pem-key
           app-id: '5471830'
           owner: ${{ github.repository_owner }}
