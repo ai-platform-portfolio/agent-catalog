@@ -15,6 +15,7 @@ from evaluation.run import load_case, score
 from portfolio_agent_runtime.handoff import prepare
 from runtime.agent import load_config, model_client, run
 from hosting.server import build_app, investigate, validate_request
+from tools.azure import AzureTools
 from tools.diagnostics import EntraAuth, KubernetesTools, ProvidedTools, bounded_get, validate_diagnosis
 from tools.telemetry import TelemetryTools
 
@@ -119,6 +120,69 @@ class Model:
 
 
 class AgentTests(unittest.TestCase):
+    def test_live_azure_reads_only_the_approved_account_and_returns_bounded_evidence(self):
+        resource = ('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/example'
+                    '/providers/Microsoft.CognitiveServices/accounts/foundry')
+        secret = 'https://example.vault.azure.net/secrets/sre-azure-read-check'
+        blob = 'https://example.blob.core.windows.net/sre-azure-acceptance/read-check.txt'
+        credential = Mock()
+        credential.get_token.return_value.token = 'token'
+        tools = AzureTools(credential, resource + '/projects/project', secret, blob)
+        self.addCleanup(tools.client.close)
+        calls = []
+
+        def upstream(request):
+            calls.append(request)
+            return httpx.Response(200, json={'id': resource, 'properties': {
+                'provisioningState': 'Succeeded', 'customSubDomainName': 'not selected',
+                'privateEndpointConnections': [{'properties': {'privateLinkServiceConnectionState': {
+                    'status': 'Approved', 'description': 'also not selected'}}}],
+            }})
+
+        request = {'incident': {'summary': 'Check the private connection', 'azure_resource_id': resource}}
+        with httpx.Client(base_url='https://management.azure.com', transport=httpx.MockTransport(upstream)) as tools.client:
+            self.assertEqual(validate_request(request, None, False, {}, tools), 'investigate')
+            with self.assertRaises(ValueError):
+                validate_request({'incident': {**request['incident'], 'azure_resource_id': resource + '/other'}},
+                                 None, False, {}, tools)
+            with self.assertRaises(ValueError):
+                validate_request({**request, 'evidence': {}}, None, False, {}, tools)
+            self.assertFalse(calls)
+            result = investigate(request, load_config(), Model(['read_foundry_account']), azure=tools)
+        self.assertEqual(result['azure_observation'], {'status': 200, 'available': True,
+                         'provisioning_state': 'Succeeded', 'connection_states': ['Approved'],
+                         'unverified': ['DNS', 'end-to-end connectivity']})
+        self.assertEqual(calls[0].url.path, resource)
+
+    def test_data_plane_verification_does_not_parse_or_return_fixture_bodies(self):
+        resource = ('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/example'
+                    '/providers/Microsoft.CognitiveServices/accounts/foundry')
+        secret = 'https://example.vault.azure.net/secrets/sre-azure-read-check'
+        blob = 'https://example.blob.core.windows.net/sre-azure-acceptance/read-check.txt'
+        credential = Mock()
+        credential.get_token.return_value.token = 'token'
+        tools = AzureTools(credential, resource + '/projects/project', secret, blob)
+        self.addCleanup(tools.client.close)
+
+        class Unreadable(httpx.SyncByteStream):
+            def __iter__(self):
+                raise AssertionError('Probe must never consume the fixture body')
+
+        def upstream(request):
+            self.assertEqual(request.headers['Authorization'], 'Bearer token')
+            if request.url.host.endswith('.vault.azure.net'):
+                self.assertEqual(str(request.url), secret + '?api-version=7.4')
+                return httpx.Response(200, stream=Unreadable())
+            self.assertEqual(str(request.url), blob)
+            self.assertEqual(request.headers['Range'], 'bytes=0-0')
+            return httpx.Response(206, stream=Unreadable())
+
+        client = httpx.Client(transport=httpx.MockTransport(upstream))
+        with patch('tools.azure.httpx.Client', return_value=client):
+            statuses = tools.verify_data_reads()
+        self.assertEqual({key: statuses[key] for key in ('key_vault', 'blob')}, {'key_vault': 200, 'blob': 206})
+        self.assertEqual(set(statuses), {'key_vault', 'blob', 'trace_id'})
+
     def test_gateway_intent_blocks_implicit_direct_model_evaluation(self):
         import os
         with patch.dict(os.environ, {'MODEL_CONNECTION_MODE': 'foundry'}), \

@@ -246,6 +246,9 @@ jobs:
           LEGACY_MEMORY_UNTIL: ${{ vars.LEGACY_MEMORY_UNTIL }}
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
+          SRE_AZURE_PROJECT_ID: ${{ vars.AZURE_AI_PROJECT_ID }}
+          SRE_AZURE_TEST_SECRET_URL: ${{ vars.SRE_AZURE_TEST_SECRET_URL }}
+          SRE_AZURE_TEST_BLOB_URL: ${{ vars.SRE_AZURE_TEST_BLOB_URL }}
 
       - name: Ensure SRE runtime subscription read access
         if: matrix.agent == 'sre'
@@ -343,6 +346,17 @@ jobs:
             --service "$SERVICE" --environment "$AZURE_ENV_NAME" --expected-version "$CANDIDATE_VERSION" \
             --target-record "$RUNNER_TEMP/live-target.json" --observed-workload "$RUNNER_TEMP/live-observation.json" \
             --release-record "$RUNNER_TEMP/acceptance/release.json" > "$RUNNER_TEMP/acceptance/live.json"
+
+      - name: Verify hosted SRE Azure evidence and data-plane reads
+        if: matrix.agent == 'sre'
+        working-directory: agents/${{ matrix.agent }}
+        env:
+          SERVICE: ${{ matrix.agent }}
+          AZURE_ENV_NAME: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+          RELEASE_RECORD: ${{ steps.candidate.outputs.record }}
+          SRE_AZURE_PROJECT_ID: ${{ vars.AZURE_AI_PROJECT_ID }}
+        run: python -m evaluation.azure_live > "$RUNNER_TEMP/acceptance/azure-live.json"
 
       - name: Promote the passing candidate and verify the stable endpoint
         working-directory: agents/${{ matrix.agent }}

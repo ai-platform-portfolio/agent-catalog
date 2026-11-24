@@ -18,6 +18,7 @@ from portfolio_agent_runtime.hosting import invoke as persistent_invoke
 from portfolio_agent_runtime.intake import investigate_event
 from runtime.agent import load_config, model_client, run
 from telemetry.tracing import configure, shutdown as shutdown_tracing
+from tools.azure import AzureTools
 from tools.diagnostics import KubernetesTools, ProvidedTools, https_url, live_clients, target, validate_diagnosis
 from tools.telemetry import TelemetryTools, telemetry_tools
 
@@ -26,11 +27,12 @@ class InvalidRequest(ValueError):
     """Only validation at the HTTP input boundary produces a client error."""
 
 
-def validate_request(payload, live, persistent, policy):
+def validate_request(payload, live, persistent, policy, azure=None):
     """Validate caller fields before crossing the model/SDK boundary."""
     shapes = {
         'investigate': ({'incident'}, {'evidence', 'investigation_id'}),
         'verify_telemetry_boundary': (set(), set()),
+        'verify_azure_data_reads': (set(), set()),
         'event': ({'event_uid', 'namespace', 'workload', 'delivery_id'}, set()),
         'alert': ({'event_uid', 'namespace', 'workload', 'delivery_id'}, set()),
         'propose': ({'incident_id', 'base_sha', 'diagnosis', 'files'}, set()),
@@ -49,7 +51,11 @@ def validate_request(payload, live, persistent, policy):
             incident = bounded(payload['incident'])
             if not isinstance(incident, dict) or not isinstance(incident.get('summary'), str) or not incident['summary']:
                 raise ValueError('Incident summary is required')
-            if 'evidence' in payload:
+            if 'azure_resource_id' in incident:
+                if azure is None or 'evidence' in payload:
+                    raise ValueError('Live ARM evidence is unavailable')
+                azure.validate_target(incident)
+            elif 'evidence' in payload:
                 ProvidedTools(payload['evidence'])
                 if 'investigation_id' in payload:
                     raise ValueError('Replays cannot select a persistent checkpoint')
@@ -58,6 +64,9 @@ def validate_request(payload, live, persistent, policy):
         elif operation == 'verify_telemetry_boundary':
             if live is None or not isinstance(live[0], TelemetryTools):
                 raise ValueError('Telemetry collectors are disabled')
+        elif operation == 'verify_azure_data_reads':
+            if azure is None:
+                raise ValueError('Azure read verification is disabled')
         elif operation in {'event', 'alert'}:
             if not live or isinstance(live[0], TelemetryTools) != (operation == 'alert'):
                 raise ValueError('Intake does not match the live collectors')
@@ -101,11 +110,13 @@ def validate_request(payload, live, persistent, policy):
         raise InvalidRequest('Invalid request fields') from None
 
 
-def investigate(payload, config, client, live=None, historical_context=None):
+def investigate(payload, config, client, live=None, historical_context=None, azure=None):
     if not isinstance(payload, dict) or not {'incident'} <= payload.keys() <= {'incident', 'evidence'}:
         raise ValueError('Request needs incident and optional evidence only')
     if 'evidence' in payload:
         tools = ProvidedTools(payload['evidence'])
+    elif 'azure_resource_id' in payload['incident'] and azure is not None:
+        tools = azure
     elif live is not None:
         api, metrics, namespace, workload = live
         tools = api if isinstance(api, TelemetryTools) else KubernetesTools(
@@ -115,6 +126,8 @@ def investigate(payload, config, client, live=None, historical_context=None):
         tools = ProvidedTools({})
     result, evidence = run(payload['incident'], config, client, tools, historical_context)
     validated = validate_diagnosis(result, evidence, historical_context)
+    if tools.source == 'live_arm' and 'read_foundry_account' in evidence:
+        validated['azure_observation'] = evidence['read_foundry_account']
     if tools.source in {'live_kubernetes', 'live_lgtm'} and 'workload_state' in evidence:
         deployment = evidence['workload_state']['deployment']
         replica_field = 'available' if tools.source == 'live_lgtm' else 'ready'
@@ -138,7 +151,7 @@ def build_app(client=None, config=None, **host_options):
         client = model_client(credential)
         coding_client = model_client(credential, capability="coding")
     backend = os.getenv('DIAGNOSTICS_BACKEND', 'provided')
-    live = project = None
+    live = project = azure = None
     context_settings = {}
     if backend in {'kubernetes', 'telemetry'}:
         namespace, workload = os.environ['KUBE_ALLOWED_NAMESPACE'], os.environ['KUBE_ALLOWED_WORKLOAD']
@@ -154,6 +167,10 @@ def build_app(client=None, config=None, **host_options):
         live = (api, metrics, namespace, workload)
     elif backend != 'provided':
         raise ValueError('Unsupported diagnostics backend')
+    if os.getenv('SRE_AZURE_PROJECT_ID'):
+        credential = credential or DefaultAzureCredential()
+        azure = AzureTools(credential, os.environ['SRE_AZURE_PROJECT_ID'],
+                           os.environ['SRE_AZURE_TEST_SECRET_URL'], os.environ['SRE_AZURE_TEST_BLOB_URL'])
     if config.get('memory', {}).get('enabled'):
         from azure.ai.projects import AIProjectClient
         credential = credential or DefaultAzureCredential()
@@ -173,10 +190,11 @@ def build_app(client=None, config=None, **host_options):
 
     async def investigation(body):
         if project is not None and 'evidence' not in body:
-            return await persistent_invoke(body, lambda request_body, history: investigate(request_body, config, client, live, history),
+            return await persistent_invoke(body, lambda request_body, history: investigate(
+                request_body, config, client, live, history, azure),
                                            project=project, **context_settings)
         return await asyncio.to_thread(investigate, {key: body[key] for key in ('incident', 'evidence') if key in body},
-                                       config, client, live)
+                                       config, client, live, azure=azure)
 
     @app.invoke_handler
     async def invoke(request):
@@ -192,9 +210,12 @@ def build_app(client=None, config=None, **host_options):
                     payload = json.loads(body)
                 except (ValueError, UnicodeDecodeError):
                     raise InvalidRequest('Invalid JSON') from None
-                operation = validate_request(payload, live, project is not None, policy)
+                operation = validate_request(payload, live, project is not None, policy, azure)
                 if operation == 'verify_telemetry_boundary':
                     return JSONResponse({'denials': await asyncio.to_thread(live[0].verify_boundary),
+                                         'version': os.getenv('FOUNDRY_AGENT_VERSION')})
+                if operation == 'verify_azure_data_reads':
+                    return JSONResponse({**await asyncio.to_thread(azure.verify_data_reads),
                                          'version': os.getenv('FOUNDRY_AGENT_VERSION')})
                 if operation in {'event', 'alert'}:
                     result = await investigate_event(payload, investigation, agent=os.environ['FOUNDRY_AGENT_NAME'],
@@ -240,6 +261,8 @@ def build_app(client=None, config=None, **host_options):
             (live[0].client if isinstance(live[0], TelemetryTools) else live[0]).close()
             if live[1] is not None:
                 live[1].close()
+        if azure is not None:
+            azure.client.close()
         if credential is not None:
             credential.close()
         await asyncio.to_thread(shutdown_tracing)

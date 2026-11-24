@@ -18,7 +18,12 @@ services:
     hooks:
       predeploy:
         shell: sh
-        run: python -m portfolio_agent_runtime.deployment config/agent.yaml
+        run: |
+          set -eu
+          python -m portfolio_agent_runtime.deployment config/agent.yaml
+          azd env set "SRE_AZURE_PROJECT_ID=${SRE_AZURE_PROJECT_ID:-}" \
+            "SRE_AZURE_TEST_SECRET_URL=${SRE_AZURE_TEST_SECRET_URL:-}" \
+            "SRE_AZURE_TEST_BLOB_URL=${SRE_AZURE_TEST_BLOB_URL:-}" --environment "$AZURE_ENV_NAME" --no-prompt
 
     metadata:
       source_revision: ${SOURCE_REVISION}
@@ -57,6 +62,9 @@ services:
       PYTHONNOUSERSITE: "1"
       DIAGNOSTICS_BACKEND: ${AGENT_DIAGNOSTICS_BACKEND}
       TELEMETRY_CONNECTION: ${TELEMETRY_CONNECTION}
+      SRE_AZURE_PROJECT_ID: ${SRE_AZURE_PROJECT_ID}
+      SRE_AZURE_TEST_SECRET_URL: ${SRE_AZURE_TEST_SECRET_URL}
+      SRE_AZURE_TEST_BLOB_URL: ${SRE_AZURE_TEST_BLOB_URL}
       WORKLOAD_PROVENANCE: ${WORKLOAD_PROVENANCE}
       KUBE_API_URL: ${KUBE_API_URL}
       KUBE_CA_PEM: ${KUBE_CA_PEM}
