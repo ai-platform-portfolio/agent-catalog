@@ -2,14 +2,14 @@ name: Investigate a Grafana readiness alert
 
 on:
   repository_dispatch:
-    types: [sre-readiness-alert]
+    types: [hosted-readiness-alert]
 
 permissions:
   contents: read
 
 jobs:
   investigate:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event.client_payload.agent == 'sre'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -24,7 +24,7 @@ jobs:
       - name: Validate bounded alert identity
         id: alert
         working-directory: agents/sre
-        run: python3 -m evaluation.alerts request "$RUNNER_TEMP/alert-request.json" >> "$GITHUB_OUTPUT"
+        run: python3 -m evaluation.alerts "$RUNNER_TEMP/alert-request.json" >> "$GITHUB_OUTPUT"
 
       - name: Investigate on the fixed serving version
         id: investigation

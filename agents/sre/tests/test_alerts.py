@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import Mock
 
-from evaluation.alerts import request, scoped_events
+from evaluation.alerts import request
 from hosting.server import validate_request
 from tools.telemetry import TelemetryTools
 
@@ -27,20 +27,6 @@ class AlertsTests(unittest.TestCase):
             request(dict(self.alert, summary='untrusted alert content'), '100', self.now)
         self.assertIsNone(request(self.alert, '100', self.now + timedelta(days=1)))
         self.assertIsNone(request(self.alert, '100', self.now - timedelta(hours=1)))
-
-    def test_registration_maps_alert_to_the_resolved_target(self):
-        events = {'sensors': {'readiness': {
-            'dependencies': [{'filters': {'data': []}}],
-            'triggers': [{'template': {'http': {'payload': []}}}],
-        }}}
-        scoped_events(events, 'management', 'preview-example', 'api')
-        sensor = events['sensors']['readiness']
-        filters = {f['path']: f['value'] for f in sensor['dependencies'][0]['filters']['data']}
-        self.assertEqual(filters['body.alerts.0.labels.cluster'], ['^management$'])
-        self.assertEqual(filters['body.alerts.0.labels.namespace'], [r'^preview\-example$'])
-        self.assertEqual(sensor['triggers'][0]['template']['http']['payload'][-1], {
-            'src': {'dependencyName': 'firing', 'value': 'api'}, 'dest': 'client_payload.workload',
-        })
 
     def test_alert_intake_requires_the_scoped_telemetry_backend(self):
         payload = request(self.alert, '100', self.now)

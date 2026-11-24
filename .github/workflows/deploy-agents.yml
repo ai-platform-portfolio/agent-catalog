@@ -34,7 +34,7 @@ on:
         type: string
 
 env:
-  APPLICATION_CHART_REVISION: 3213f8d4cc7566d120c6b1af95cfa5927069af42 # scoped Loki readiness Events
+  APPLICATION_CHART_REVISION: 75f80cccd6ce6e2e566d60a70c60ed54a3e58084 # hosted readiness subscriptions
 
 permissions:
   contents: read
@@ -200,7 +200,8 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Resolve chart-owned public model connections
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@f1770dafd67b63ae8938d431b461b21a5fc22763
+        id: gateway
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
         with:
           operation: configure
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
@@ -238,7 +239,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           source-revision: ${{ github.sha }}
           preserve-serving-version: 'true'
-          traces-endpoint: ${{ vars.AGENT_TRACES_ENDPOINT }}
+          traces-endpoint: ${{ steps.gateway.outputs.traces-endpoint }}
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           # Model connection metadata comes from the shared chart, never inline keys.
@@ -246,10 +247,23 @@ jobs:
           METRICS_URL: ${{ vars.METRICS_URL }}
           METRICS_TOKEN_SCOPE: ${{ vars.METRICS_TOKEN_SCOPE }}
 
-      - name: Reconcile credentials for the actual native principal
-        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@f1770dafd67b63ae8938d431b461b21a5fc22763
+      - name: Mint the existing repository-scoped Git publication token
+        id: delivery-token
+        uses: ai-platform-portfolio/ops-shared/.github/actions/github-app-token@52c206abbccce14939c12bb7b556cdecc284df15
         with:
-          operation: apply
+          vault-name: ${{ secrets.FUNCTION_VAULT }}
+          key-name: ai-platform-clusters-pem-key
+          app-id: '5471830'
+          owner: ${{ github.repository_owner }}
+          repository: ${{ github.event.repository.name }}
+          contents: write
+
+      - name: Publish the native principal and wait for Argo credentials
+        env:
+          GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
+        with:
+          operation: candidate
           service: ${{ github.event.repository.name }}-${{ matrix.agent }}
           working-directory: agents/${{ matrix.agent }}
           chart-directory: .application-chart
@@ -312,15 +326,20 @@ jobs:
           python -m evaluation.release promote "$SERVICE" "$RUNNER_TEMP/acceptance"
           echo "Stable endpoint verified on v$(jq -r .smoke.deployment.version "$RUNNER_TEMP/acceptance/routing.json")." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Register readiness alerts after the stable SRE smoke
-        if: matrix.agent == 'sre' && steps.live-target.outputs.enabled == 'true'
-        working-directory: agents/sre
+      - name: Publish verified serving readiness and wait for Argo
         env:
-          CHART_DIRECTORY: ${{ github.workspace }}/.application-chart
-        run: |
-          if [[ "$AGENT_DIAGNOSTICS_BACKEND" == telemetry ]]; then
-            python -m evaluation.alerts register "$RUNNER_TEMP"
-          fi
+          GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
+        uses: ai-platform-portfolio/ops-shared/.github/actions/gateway-access@b72c1266617eb7768f5293270c9447c4c40a3b5b
+        with:
+          operation: serving
+          service: ${{ github.event.repository.name }}-${{ matrix.agent }}
+          working-directory: agents/${{ matrix.agent }}
+          chart-directory: .application-chart
+          chart-revision: ${{ env.APPLICATION_CHART_REVISION }}
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+          cluster: ${{ vars.AKS_NAME }}
+          release-record: ${{ steps.candidate.outputs.record }}
+          routing-record: ${{ runner.temp }}/acceptance/routing.json
 
       - name: Retain evaluation and routing evidence
         if: always() && steps.candidate.outcome == 'success'

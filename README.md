@@ -346,10 +346,10 @@ verified source. Recollect the record if the Pod is replaced.
 
 ## Telemetry and evaluation traceability
 
-The optional **repository** variable `AGENT_TRACES_ENDPOINT` supplies the exact
-HTTPS OTLP traces URL, normally `https://otel.internal.<platform-domain>/v1/traces`.
-Leave it unset to disable collector export. This is not an organization-level AKS
-dependency. Standard `OTEL_SERVICE_NAME` can override the default service name.
+Hosted delivery reads the HTTPS OTLP traces URL from the GitOps gateway defaults
+when the private collector is enabled. Local azd deployments can set
+`AGENT_TRACES_ENDPOINT` explicitly. Standard `OTEL_SERVICE_NAME` can override the
+default service name.
 The versioned `portfolio-agent-observability` wheel from application-library owns
 provider setup, bounded export and shutdown. This agent supplies only service
 identity and the Langfuse choice in `telemetry/tracing.py`; operation spans stay
@@ -476,8 +476,10 @@ steps never execute target code. One bounded artifact retains the audit records.
 overwrite another proposal or reopen a closed incident PR.
 
 Grafana evaluates readiness alerts from Kubernetes Events collected by Alloy
-into Loki. After the SRE release verifies the stable endpoint, it registers
-the chart-rendered subscription for its configured live telemetry target.
+into Loki. Agents opt in with `readinessAlerts: true` in `config/agent.yaml`.
+Catalog publishes candidate identity and verified serving readiness to Git. The platform ApplicationSet and shared chart reconcile credentials
+before hosted evaluation and enable the scoped subscription after the serving
+smoke.
 The private shared Argo Events receiver delivers firing alerts for that target
 to `alert-investigate.yml`, which invokes the serving version and retains an
 incident and trace receipt. Grafana's fingerprint and start time distinguish
