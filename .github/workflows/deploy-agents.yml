@@ -444,18 +444,20 @@ jobs:
 
           # A retried run can retain a same-name artifact from the failed attempt.
           completed=$(jq -er .updated_at "$RUNNER_TEMP/source-run.json")
-          artifact_id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN/artifacts" |
-            jq -er --arg name "$RELEASE_ARTIFACT" --arg completed "$completed" '
+          artifact=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN/artifacts" |
+            jq -ce --arg name "$RELEASE_ARTIFACT" --arg completed "$completed" '
               [.[].artifacts[] | select(.name == $name and .expired == false and .created_at <= $completed)]
-              | max_by(.created_at).id')
-          echo "artifact-id=$artifact_id" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ steps.evidence.outputs.artifact-id }}
-          path: ${{ runner.temp }}/acceptance
-          run-id: ${{ inputs.release-run }}
-          github-token: ${{ github.token }}
+              | max_by(.created_at)')
+          artifact_id=$(jq -er '.id | select(type == "number")' <<< "$artifact")
+          checksum=$(jq -er '.digest | capture("^sha256:(?<value>[a-f0-9]{64})$").value' <<< "$artifact")
+          archive="$RUNNER_TEMP/rollback-release.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          actual=$(sha256sum "$archive")
+          [[ "${actual%% *}" == "$checksum" ]] || {
+            echo '::error::Rollback artifact checksum does not match GitHub metadata.'
+            exit 1
+          }
+          unzip -q "$archive" -d "$RUNNER_TEMP/acceptance"
 
       - name: Check for Azure Developer CLI
         id: azd
